@@ -1,165 +1,283 @@
-# PoC: record and transcribe (praatvol phase 0)
+# praatvol beta: record and transcribe
 
-A single proof-of-concept script that:
+The proof of concept (PoC) provides the terminal interface for `beta-0.0.1` on macOS 14.2 or later. The script captures microphone audio and optional system audio, then sends one request through OpenRouter to `elevenlabs/scribe-v2`.
 
-1. Records the Mac's microphone until you press Ctrl+C.
-2. Saves the audio as a 16 kHz mono FLAC in `recordings/`.
-3. Sends the audio to OpenRouter's speech-to-text endpoint with `elevenlabs/scribe-v2`, with speaker diarization on.
-4. Writes a timestamped, speaker-labelled transcript to `transcripts/`, plus the raw API JSON.
+The script keeps a lossless Free Lossless Audio Codec (FLAC) archive and creates an Opus upload copy. Each transcript includes timestamps, speaker letters, device details for live capture, and the reported cost. Output includes Markdown and raw JavaScript Object Notation (JSON).
 
-No ffmpeg required. macOS only. This is a throwaway experiment, not the product.
-
-## Files
+## Files and setup
 
 | File | Purpose |
 |---|---|
-| `record_and_transcribe.py` | The whole PoC: record, send, transcribe, write output |
-| `requirements.txt` | Pinned Python dependencies |
-| `.env.example` | Template for the OpenRouter API key |
+| `record_and_transcribe.py` | The script captures audio, sends the request, and writes transcripts. |
+| `test_record_and_transcribe.py` | The offline suite checks devices, audio conversion, uploads, and responses. |
+| `requirements.txt` | The file lists pinned Python dependencies. |
+| `.env.example` | The template contains the OpenRouter application programming interface (API) key variable. |
 
-Recording and transcript output (`recordings/`, `transcripts/`, `.env`) are gitignored.
+Use Python 3.14. The development machine runs Python 3.14.8. The script needs no ffmpeg or local machine-learning model.
 
-## Setup
-
-Requires Python 3.14 (the system Python works; verified on macOS 14 with Python 3.14.8).
-
-```bash
-cd experiments/poc
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### API key
-
-Copy the template and paste your OpenRouter key into it:
+From the repository root, create a virtual environment:
 
 ```bash
-cp .env.example .env
-# then edit .env: OPENROUTER_API_KEY=your_key_here
+python3 -m venv experiments/poc/.venv
 ```
 
-You can also skip the `.env` file and export the key in your shell instead:
+Activate the virtual environment:
+
+```bash
+source experiments/poc/.venv/bin/activate
+```
+
+Install the dependencies:
+
+```bash
+pip install -r experiments/poc/requirements.txt
+```
+
+Copy the key template:
+
+```bash
+cp experiments/poc/.env.example experiments/poc/.env
+```
+
+Open `experiments/poc/.env` in a text editor. Set `OPENROUTER_API_KEY` to your key from https://openrouter.ai.
+
+```dotenv
+OPENROUTER_API_KEY=your_key_here
+```
+
+Alternatively, export the key in your shell:
 
 ```bash
 export OPENROUTER_API_KEY=your_key_here
 ```
 
-Create a key in your OpenRouter account at https://openrouter.ai. The key is never stored anywhere else.
+Git ignores `.env`, `recordings/`, and `transcripts/`. The script places output under `experiments/poc/`, regardless of your current directory.
 
-### Microphone permission (macOS)
-
-macOS only lets apps record audio after you grant permission:
+### Microphone permission
 
 1. Open **System Settings > Privacy & Security > Microphone**.
-2. Enable the toggle for your terminal app (Terminal, iTerm, VS Code, ...).
-3. Quit and reopen the terminal — the permission only applies to new terminal sessions.
+2. Enable access for your terminal app.
+3. Restart your terminal.
+4. Activate the virtual environment again.
 
-If recording fails or produces a silent file, this is almost always the cause.
+If microphone capture stalls, check permission and the input device. The script stops if the microphone supplies no audio for five seconds.
 
-## Usage
+## Usage and flags
 
-Record until Ctrl+C, then transcribe:
+All commands below run from the repository root with the virtual environment active.
 
-```bash
-python record_and_transcribe.py
-```
-
-```
-Recording... press Ctrl+C to stop
-^C
-Stopped. Saved 2026-10-08_14-03-22.flac (2 min 10 s)
-Sending 2026-10-08_14-03-22.flac to OpenRouter (elevenlabs/scribe-v2)...
-Transcription complete.
-Wrote transcript: .../transcripts/2026-10-08_14-03-22.md
-Wrote raw API JSON: .../transcripts/2026-10-08_14-03-22.json
-```
-
-Transcribe an existing audio file without recording again (useful for re-testing). Accepted formats are wav, flac, mp3, m4a and ogg:
+Record microphone audio:
 
 ```bash
-python record_and_transcribe.py --file recordings/2026-10-08_14-03-22.flac
+python experiments/poc/record_and_transcribe.py
 ```
 
-Set the maximum number of speakers (sent to ElevenLabs as `num_speakers`, an upper bound and not an exact count):
+Press Ctrl+C to stop capture and start transcription.
+
+List input devices and the default input and output:
 
 ```bash
-python record_and_transcribe.py --speakers 2
+python experiments/poc/record_and_transcribe.py --list-devices
 ```
 
-Try another OpenRouter speech-to-text model. Only `elevenlabs/scribe-v2` has its diarization option wired up; other models run without speaker labels and print a note:
+`--list-devices` requires no API key and captures no audio.
+
+Select a microphone:
 
 ```bash
-python record_and_transcribe.py --model openai/whisper-large-v3 --file recordings/example.flac
+python experiments/poc/record_and_transcribe.py --mic "MacBook"
 ```
 
-Show all options:
+`--mic NAME` matches a case-insensitive substring of an input device name. The name must match exactly one input. Use a longer substring if the script reports multiple matches.
+
+Transcribe an existing file:
 
 ```bash
-python record_and_transcribe.py --help
+python experiments/poc/record_and_transcribe.py --file /absolute/path/to/audio.flac
 ```
 
-## Size limit
+`--file PATH` accepts Waveform Audio File Format (WAV), FLAC, MPEG Audio Layer III (MP3), MPEG-4 Audio (M4A), and Ogg files. WAV and FLAC use Opus by default. MP3, M4A, and Ogg pass through unchanged.
 
-OpenRouter accepts at most 25 MB per request. The script rejects a longer file before upload, with the message "recording too long for a single request — chunking not supported yet". Chunking is not implemented.
+Upload lossless audio:
 
-On speech recorded at 16 kHz mono FLAC, that is about 1.15 MB per minute, so **about 21 minutes per request**. Measured on a 2.3-minute synthetic speech sample; real recordings will vary. The cap is checked against the file size. OpenRouter might count the base64-encoded body, which is about 33% larger, in which case the limit is closer to 16 minutes. This is not confirmed yet.
+```bash
+python experiments/poc/record_and_transcribe.py --lossless --file /absolute/path/to/audio.flac
+```
 
-## Cost
+`--lossless` sends WAV or FLAC without Opus conversion. The flag also applies to live capture. Already compressed files still pass through unchanged.
 
-Each run's header shows the cost OpenRouter reports for that request (`- Cost: $X (OpenRouter)`). Costs are per second of audio, so a 2-minute recording costs about $0.004 at the listed ElevenLabs Scribe v2 rate. Check current prices on the model page: https://openrouter.ai/elevenlabs/scribe-v2
+Set the maximum speaker count:
 
-## Output format
+```bash
+python experiments/poc/record_and_transcribe.py --speakers 2
+```
 
-Each run writes two files into `transcripts/`, named with the run timestamp
-(`YYYY-MM-DD_HH-MM-SS.md` and `YYYY-MM-DD_HH-MM-SS.json`).
+`--speakers N` requires a positive integer. ElevenLabs treats `num_speakers` as an upper bound, not an exact count.
 
-The Markdown file has a header and one line per speaker turn:
+Select another OpenRouter model:
+
+```bash
+python experiments/poc/record_and_transcribe.py --model openai/whisper-large-v3 --file /absolute/path/to/audio.flac
+```
+
+Only `elevenlabs/scribe-v2` uses the configured diarization option. Other models omit that option and `--speakers`; the script prints a note.
+
+Show every option:
+
+```bash
+python experiments/poc/record_and_transcribe.py --help
+```
+
+### Devices and capture rates
+
+The default microphone uses the current macOS input. The script leaves the default input and output unchanged. You can combine a headset output with a different microphone.
+
+The script first opens the microphone at 16 kilohertz (kHz), mono. If that rate fails, the script retries at the default rate for the device. The script stores that audio on disk and converts the audio after capture.
+
+At startup, the script prints the microphone name and actual rate. For system audio, the script also prints the default output name. After capture, the script reads the actual system rate and channel count from the WAV header.
+
+## Microphone and system audio
+
+Build the helper from the repository root:
+
+```bash
+experiments/system-audio/build.sh
+```
+
+The helper requires the Apple Command Line Tools. The build currently targets Apple Silicon.
+
+Capture microphone audio and system audio:
+
+```bash
+python experiments/poc/record_and_transcribe.py --system-audio --mic "MacBook"
+```
+
+`--mic` is optional. `--system-audio` launches `experiments/system-audio/praatvol.app` through `open -n -W`. The helper uses a global Core Audio tap without virtual drivers or changes to audio routing.
+
+Allow system-audio access for **praatvol** at the macOS prompt. If access fails, follow [the helper guide](../system-audio/README.md#run-and-permissions). A helper startup failure after about five seconds points to the helper log.
+
+Press Ctrl+C to stop both captures. The script keeps these files under `recordings/`:
+
+- `<timestamp>_mic.flac` contains the separate microphone track at 16 kHz, mono.
+- `<timestamp>_system.wav` contains the raw system track at the actual rate and channel count.
+- `<timestamp>.flac` contains the aligned mix at 16 kHz, mono, with 16-bit pulse-code modulation (PCM).
+- `<timestamp>_system.wav.log` contains helper diagnostics and a silence check.
+- `<timestamp>_system.wav.start` contains the Unix timestamp for the first system sample.
+
+The helper removes the temporary `.pid` file on normal exit. The file contains the process identifier (PID).
+
+The Python mixer accepts different rates and channel counts. The mixer averages channels, filters higher rates, and interpolates samples onto the 16 kHz grid. The mixer aligns tracks with start timestamps and adds silence to the shorter track. The mixer reduces the peak only if necessary to keep the encoded peak at or below 0.95.
+
+Alignment remains approximate because the mixer lacks correction for device latency or clock drift. The filter targets speech, not high-fidelity audio. Conversion and the mixer load audio into memory; long recordings can exceed available memory.
+
+Use headphones for calls. Speakers also send remote voices into the microphone track, which duplicates voices and can confuse speaker labels.
+
+The helper captures all system playback, not only Teams. Silence can indicate idle playback or denied permission. The script warns about silence and retains microphone audio for transcription.
+
+Use `--mic` only for live capture. Use `--system-audio` only for live capture. Both flags conflict with `--file`.
+
+Stop capture before you change the output device. The helper lacks recovery for device changes and reads the format only at startup. A change can stop callbacks or cause a write error.
+
+The script warns about helper errors, silence, absent finalization, or a system track that ends over five seconds before the microphone. Idle playback can also produce the early-stop warning. The mixer retains readable system audio and adds silence at the end. If the WAV is absent or unreadable, the script fails and keeps the raw files.
+
+## Upload format and duration
+
+The script keeps the original FLAC archive locally. The script converts WAV and FLAC to mono Opus in an Ogg container for upload.
+
+| Audio duration | Opus target | Guidance |
+|---|---:|---|
+| Up to 60 minutes | About 64 kilobits per second (kbps) | A 60-minute request succeeded. |
+| Over 60 minutes, up to 90 minutes | About 48 kbps | A 90-minute request succeeded. |
+| Over 90 minutes | About 32 kbps | The duration remains untested and can cause a timeout. |
+
+Above 90 minutes, the script prints one warning line about timeout risk and the local archive. The script still attempts the request if the size guard accepts the upload.
+
+The encoder calibrates the target on the first 30 seconds. The script reports the actual bitrate and size. Actual bitrate can vary with the audio; the script warns if the target differs by more than 10%.
+
+Opus at about 64 kbps matched lossless quality within run-to-run noise on the reference sample. Opus at about 48 kbps was near-equivalent. See [the compression experiment](../compression-quality/README.md) for the measurements and the original strict criterion.
+
+If Opus conversion fails, the script prints a warning and uploads lossless audio instead. `--lossless` also uploads the original WAV or FLAC. Lossless audio reaches the size limit sooner, and the same size guard applies.
+
+Already compressed inputs pass through unchanged, regardless of duration. If libsndfile cannot read a duration, as with M4A, the script prints a note and skips the duration warning.
+
+## Request size and timeout limits
+
+OpenRouter limits the complete base64 JSON body to 50 mebibytes (MiB), or 52,428,800 bytes. The limit applies to the request body, not the raw audio file.
+
+The script estimates the body before upload:
+
+```text
+estimated_body_bytes = ceil(file_bytes / 3) * 4 + 1024
+```
+
+The extra 1,024 bytes reserve space for JSON metadata. The script rejects estimates above 50,000,000 bytes to leave a safety margin below the server limit. The size guard checks the actual upload file: Opus by default, lossless with `--lossless`, or a compressed input without conversion.
+
+If the guard rejects the upload, the error reports the estimate, safety limit, server limit, and local upload path. The full archive remains local. The script does not split audio into chunks.
+
+Verified requests through `elevenlabs/scribe-v2` include:
+
+- A 60-minute request at about 64 kbps succeeded in 68 seconds.
+- A 90-minute request at about 48 kbps succeeded in 88 seconds.
+- A three-hour request at about 24 kbps returned provider error 524 after 148 seconds, without a transcript.
+
+Speaker labels stay consistent throughout a single request. Separate requests lack reliable speaker matching. The successful trials used repeated audio; the trials do not guarantee success for every conversation or provider load.
+
+The Python request timeout remains 120 seconds. The experiments do not establish a fixed provider timeout. If a Hypertext Transfer Protocol (HTTP) 200 response contains an `error` key, the script reports a provider failure and keeps local audio.
+
+See [the limits experiment](../limits-test/README.md) for exact sizes, timings, and costs.
+
+## Cost and output
+
+The observed cost for `elevenlabs/scribe-v2` is about 0.11 United States dollars (USD) per audio hour. Each transcript shows the cost from `usage.cost`. Check current prices at https://openrouter.ai/elevenlabs/scribe-v2.
+
+The script writes two files under `transcripts/` with the timestamp `YYYY-MM-DD_HH-MM-SS`:
+
+- The `.md` file contains the transcript and metadata.
+- The `.json` file contains the raw OpenRouter response.
+
+The Markdown header shows the source file, date, duration, speaker count, cost, and upload details. Live capture also includes device names and capture rates. The upload line shows the codec, file size, and request duration.
+
+For example, a synthetic speaker turn looks like:
 
 ```markdown
-# Transcript: 2026-10-08 14:03:22
-
-- Source audio: 2026-10-08_14-03-22.flac
-- Date/time: 2026-10-08 14:03:22
-- Duration: 2 min 10 s
-- Speakers: 2
-- Cost: $0.002186 (OpenRouter)
-
-[00:00] Speaker A: Good morning everyone, let's get started.
-[00:07] Speaker B: Sounds good, I have two items on my list.
-[00:15] Speaker A: Go ahead, I'll take notes.
+[00:00] Speaker A: Hello.
 ```
 
-Timestamps are `[mm:ss]` from the start of the audio (minutes keep counting past 59 on long
-recordings). Speaker letters (`A`, `B`, ...) come from the diarization index and are per-recording,
-not persistent identities. Consecutive words from the same speaker are joined into one line.
-If no speaker labels come back, lines show `Speaker ?` and the script prints a warning.
+Timestamps count minutes beyond 59. Speaker letters represent diarization labels within one request, not names or identities across recordings. The script joins consecutive words from the same speaker into one turn. If the response lacks speaker labels, the transcript uses `Speaker ?` and the script prints a warning.
 
-The `.json` file next to it is the raw OpenRouter response, kept for debugging.
+ElevenLabs returns speaker labels on words, not segments. The request uses `provider.options.elevenlabs.diarize = true`. A live two-speaker test confirmed that option through OpenRouter on 2026-10-08.
 
-## Notes and limits
+With `--file`, the header date reflects the transcription run, not the original capture time.
 
-- Audio is captured as 16 kHz mono 16-bit FLAC and streamed to disk in small blocks, so long
-  recordings are fine up to the size limit above. If no audio arrives for 5 seconds (for example
-  when macOS blocks microphone access), the script stops with a clear message instead of hanging.
-- The diarization option is `provider.options.elevenlabs.diarize = true`. OpenRouter's docs show
-  the `provider.options.<endpoint tag>` shape, and the endpoint tag for Scribe v2 is `elevenlabs`.
-  The `diarize` field name comes from the ElevenLabs API reference, not from OpenRouter's docs.
-  A live two-speaker test through OpenRouter confirmed it on 2026-10-08. Speaker labels come back
-  on `words`, not on `segments`.
-- The request timeout is 120 seconds. OpenRouter has a 60-second upstream timeout, so very long
-  files may fail.
-- With `--file`, the header date/time is the time you ran the script, not the time the audio
-  was originally recorded.
-- Recording people may require their consent. Unresolved — flagged for later phases.
+## Offline verification
 
-## Troubleshooting
+Run the whole suite from the repository root:
 
-| Symptom | Fix |
-|---|---|
-| `Error: OPENROUTER_API_KEY is not set.` | Put the key in `experiments/poc/.env` or export it |
-| `OpenRouter rejected the API key (HTTP 401)` | Check the key value |
-| `recording too long for a single request` | Record less than about 21 minutes per request (see Size limit) |
-| "Could not record from the microphone" or "No audio arrived ..." | Grant mic permission (see above), restart the terminal |
-| "No usable microphone was found" | Pick an input device in System Settings > Sound |
-| Every line says `Speaker ?` | OpenRouter did not return speaker labels, so the diarization option may not be forwarded |
+```bash
+experiments/poc/.venv/bin/python -m unittest discover -s experiments/poc
+```
+
+The suite checks:
+
+- Different rates and channel counts, including mono, stereo, and six channels.
+- Alignment, channel averages, end padding, peak limits, and tone frequency.
+- Microphone selection, native-rate fallback, and device names in transcript headers.
+- Opus calibration, duration-based targets, lossless uploads, and conversion failures.
+- The body estimate, size guard, duration warning, and HTTP 200 provider errors.
+
+Earlier live checks confirmed non-silent system capture and clean shutdown of both tracks. Real-call quality, headset capture, and changes to devices during capture still need manual checks. See [the helper guide](../system-audio/README.md#verification-on-the-development-machine) for prior results.
+
+## Troubleshooting and privacy
+
+- If `OPENROUTER_API_KEY` is absent, set the key in `experiments/poc/.env` or export the key.
+- If OpenRouter returns HTTP 401, check the key value.
+- If the size guard rejects the body, use default Opus conversion or a shorter recording.
+- If a provider failure occurs, keep the local archive for a later manual attempt.
+- If microphone capture fails or stalls, grant permission and restart the terminal.
+- If microphone selection fails, use `--list-devices` and select a unique input name.
+- If `praatvol.app` is absent, run `experiments/system-audio/build.sh`.
+- If the helper fails to start, inspect the log and grant system-audio permission.
+- If system audio is silent, play audio and check permission.
+- If the transcript uses `Speaker ?`, check the model and the returned speaker labels.
+
+Keep audio and transcripts private. OpenRouter and ElevenLabs receive the audio. Obtain appropriate consent before capture. The existing request client retries some network failures and server errors; those retries can duplicate paid requests.
