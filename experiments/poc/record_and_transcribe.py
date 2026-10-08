@@ -5,6 +5,7 @@ endpoint with speaker diarization, and save a timestamped, speaker-labelled tran
 
 import argparse
 import base64
+import io
 import json
 import os
 import queue
@@ -16,6 +17,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy
 import requests
@@ -44,12 +46,26 @@ ELEVENLABS_SCRIBE_V2_MODEL = "elevenlabs/scribe-v2"
 #   not forwarding these options and they need another name.
 ELEVENLABS_PROVIDER_TAG = "elevenlabs"
 SUPPORTED_AUDIO_FORMATS = ("wav", "flac", "mp3", "m4a", "ogg")
-# #COMPLETION_DRIVE: the 25 MB cap is read as 25,000,000 bytes (the stricter reading). The docs
-#   do not say whether the cap applies to the base64 JSON body (about 33% larger than the file).
-# #SUGGEST_VERIFY: send a file of about 24 MB and check whether OpenRouter rejects it.
-MAX_AUDIO_BYTES = 25_000_000
+# Server-reported body cap: experiments/limits-test/README.md.
+MAX_REQUEST_BODY_BYTES = 52_428_800
+SAFE_REQUEST_BODY_BYTES = 50_000_000
+# #COMPLETION_DRIVE: 1,024 bytes covers the small JSON metadata for typical model names.
+# #SUGGEST_VERIFY: Compare serialized payload sizes if request metadata grows.
+REQUEST_JSON_OVERHEAD_BYTES = 1024
 SPEAKER_LETTERS = string.ascii_uppercase
-
+LOSSLESS_AUDIO_FORMATS = ("wav", "flac")
+# Verified single-request lengths: experiments/limits-test/README.md.
+UPLOAD_OPUS_STANDARD_MAX_MINUTES = 60
+UPLOAD_OPUS_EXTENDED_MAX_MINUTES = 90
+UPLOAD_OPUS_STANDARD_TARGET_KBPS = 64
+UPLOAD_OPUS_EXTENDED_TARGET_KBPS = 48
+# #COMPLETION_DRIVE: 32 kbps limits size beyond the tested duration, not timeout risk.
+# #SUGGEST_VERIFY: Test a real recording longer than 90 minutes before claiming support.
+UPLOAD_OPUS_UNTESTED_TARGET_KBPS = 32
+UPLOAD_OPUS_TOLERANCE = 0.10
+OPUS_CALIBRATION_SECONDS = 30
+OPUS_CALIBRATION_ITERATIONS = 12
+OPUS_CALIBRATION_TOLERANCE = 0.02
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
 
@@ -90,6 +106,14 @@ def parse_arguments():
         "--system-audio",
         action="store_true",
         help="record the microphone and system playback together via praatvol.app",
+    )
+    parser.add_argument(
+        "--lossless",
+        action="store_true",
+        help=(
+            "send the lossless FLAC (or WAV) instead of the duration-based Opus upload copy. "
+            "Larger files, so the length limit is shorter"
+        ),
     )
     parser.add_argument(
         "--mic", metavar="NAME", help="select an input device by case-insensitive name substring"
@@ -585,15 +609,141 @@ def read_audio_format(audio_path):
     return audio_format
 
 
+def estimate_request_body_bytes(audio_size_bytes):
+    return ((audio_size_bytes + 2) // 3) * 4 + REQUEST_JSON_OVERHEAD_BYTES
+
+
 def ensure_audio_within_size_limit(audio_path):
-    audio_size_bytes = audio_path.stat().st_size
-    if audio_size_bytes <= MAX_AUDIO_BYTES:
+    estimated_body_bytes = estimate_request_body_bytes(audio_path.stat().st_size)
+    if estimated_body_bytes <= SAFE_REQUEST_BODY_BYTES:
         return
     fail(
-        "recording too long for a single request — chunking not supported yet "
-        f"({audio_size_bytes / 1_000_000:.1f} MB, limit 25 MB).\n"
-        f"  The audio is kept at {audio_path}"
+        f"Estimated base64 JSON body is {estimated_body_bytes:,} bytes, above the "
+        f"{SAFE_REQUEST_BODY_BYTES:,}-byte safety limit "
+        f"(OpenRouter limit: {MAX_REQUEST_BODY_BYTES:,} bytes). Chunking is not supported.\n"
+        f"  The full recording is saved locally; upload file: {audio_path}"
     )
+
+
+class Upload(NamedTuple):
+    path: Path
+    audio_format: str
+    codec_label: str
+
+
+def upload_copy_path(audio_path):
+    return SCRIPT_DIRECTORY / "recordings" / f"{audio_path.stem}.upload.ogg"
+
+
+def upload_opus_target_bitrate_kbps(duration_seconds):
+    if duration_seconds <= UPLOAD_OPUS_STANDARD_MAX_MINUTES * 60:
+        return UPLOAD_OPUS_STANDARD_TARGET_KBPS
+    if duration_seconds <= UPLOAD_OPUS_EXTENDED_MAX_MINUTES * 60:
+        return UPLOAD_OPUS_EXTENDED_TARGET_KBPS
+    return UPLOAD_OPUS_UNTESTED_TARGET_KBPS
+
+
+def opus_bitrate_error(actual_kbps, target_bitrate_kbps):
+    return abs(actual_kbps / target_bitrate_kbps - 1)
+
+
+def measure_kbps(size_bytes, duration_seconds):
+    return size_bytes * 8 / duration_seconds / 1000
+
+
+def encode_opus_bytes(mono_samples, compression_level):
+    buffer = io.BytesIO()
+    sf.write(buffer, mono_samples, SAMPLE_RATE_HZ, format="OGG", subtype="OPUS",
+             compression_level=compression_level)
+    return buffer.getvalue()
+
+
+def calibrate_opus_compression_level(mono_samples, target_bitrate_kbps):
+    # #COMPLETION_DRIVE: the first 60 s represents the bitrate of the whole recording.
+    # #SUGGEST_VERIFY: compare the probe kbps with the full-file kbps on a long real recording.
+    probe_samples = mono_samples[:SAMPLE_RATE_HZ * OPUS_CALIBRATION_SECONDS]
+    probe_duration_seconds = len(probe_samples) / SAMPLE_RATE_HZ
+    lower_level, upper_level = 0.0, 1.0
+    best_level, best_error = 0.0, float("inf")
+    for _ in range(OPUS_CALIBRATION_ITERATIONS):
+        level = (lower_level + upper_level) / 2
+        actual_kbps = measure_kbps(len(encode_opus_bytes(probe_samples, level)), probe_duration_seconds)
+        error = opus_bitrate_error(actual_kbps, target_bitrate_kbps)
+        if error < best_error:
+            best_level, best_error = level, error
+        if error <= OPUS_CALIBRATION_TOLERANCE:
+            break
+        # A higher compression_level gives a lower bitrate.
+        if actual_kbps > target_bitrate_kbps:
+            lower_level = level
+        else:
+            upper_level = level
+    return best_level
+
+
+def encode_opus_upload(audio_path, upload_path):
+    samples, source_rate_hz = sf.read(audio_path, dtype="float32", always_2d=True)
+    mono_samples = resample_audio(samples.mean(axis=1), source_rate_hz)
+    if mono_samples.size == 0:
+        raise ValueError(f"{audio_path.name} contains no audio to encode.")
+    duration_seconds = len(mono_samples) / SAMPLE_RATE_HZ
+    target_bitrate_kbps = upload_opus_target_bitrate_kbps(duration_seconds)
+    compression_level = calibrate_opus_compression_level(mono_samples, target_bitrate_kbps)
+    encoded_bytes = encode_opus_bytes(mono_samples, compression_level)
+    actual_kbps = measure_kbps(len(encoded_bytes), duration_seconds)
+    upload_path.parent.mkdir(exist_ok=True)
+    upload_path.write_bytes(encoded_bytes)
+    print(f"Encoded {upload_path.name}: {actual_kbps:.1f} kbps, {len(encoded_bytes) / 1_000_000:.2f} MB")
+    if opus_bitrate_error(actual_kbps, target_bitrate_kbps) > UPLOAD_OPUS_TOLERANCE:
+        print(
+            f"Warning: upload is {actual_kbps:.1f} kbps, outside {target_bitrate_kbps} kbps "
+            f"+/- {UPLOAD_OPUS_TOLERANCE:.0%}; check the calibration and request size."
+        )
+    return target_bitrate_kbps
+
+
+def encode_opus_upload_or_fall_back(audio_path, audio_format):
+    upload_path = upload_copy_path(audio_path)
+    try:
+        target_bitrate_kbps = encode_opus_upload(audio_path, upload_path)
+    except (OSError, ValueError, RuntimeError, sf.SoundFileError) as error:
+        print(f"Warning: Opus encode failed ({error}); sending {audio_path.name} lossless instead.")
+        return Upload(audio_path, audio_format, f"{audio_format.upper()} (lossless; Opus encode failed)")
+    return Upload(upload_path, "ogg", f"Opus ~{target_bitrate_kbps} kbps")
+
+
+def prepare_upload(audio_path, audio_format, lossless):
+    if audio_format not in LOSSLESS_AUDIO_FORMATS:
+        return Upload(audio_path, audio_format, f"{audio_format.upper()} (sent unchanged)")
+    if lossless:
+        return Upload(audio_path, audio_format, f"{audio_format.upper()} (lossless)")
+    return encode_opus_upload_or_fall_back(audio_path, audio_format)
+
+
+def audio_duration_seconds(audio_path):
+    try:
+        return sf.info(audio_path).duration
+    except (OSError, sf.SoundFileError):
+        # #COMPLETION_DRIVE: libsndfile cannot read m4a, so the length check is skipped for those files.
+        # #SUGGEST_VERIFY: read m4a durations another way if long m4a inputs matter.
+        return None
+
+
+def warn_if_audio_exceeds_recommended_length(audio_path):
+    duration_seconds = audio_duration_seconds(audio_path)
+    if duration_seconds is None:
+        print(f"Note: could not read the duration of {audio_path.name}, so the length check was skipped.")
+        return
+    if duration_seconds > UPLOAD_OPUS_EXTENDED_MAX_MINUTES * 60:
+        print(
+            "Recording is longer than 90 minutes (beyond tested length); it may time out. "
+            "The full recording is saved locally."
+        )
+
+
+def describe_upload(upload, request_latency_seconds):
+    size_megabytes = upload.path.stat().st_size / 1_000_000
+    return f"{upload.codec_label}, {size_megabytes:.2f} MB, request took {request_latency_seconds:.1f} s"
 
 
 def build_provider_options(model, speakers_expected):
@@ -637,6 +787,11 @@ def transcribe_audio(audio_path, audio_format, api_key, model, speakers_expected
         transcript = response.json()
     except ValueError:
         fail(f"OpenRouter returned a response that is not JSON: {response.text[:200]}")
+    if "error" in transcript:
+        fail(
+            f"OpenRouter provider timed out or errored: {json.dumps(transcript['error'])}. "
+            "The full recording is saved locally."
+        )
     print("Transcription complete.")
     return transcript
 
@@ -731,7 +886,9 @@ def format_cost(response):
     return f"${cost_usd:.6f} (OpenRouter)"
 
 
-def write_transcript_markdown(output_path, response, source_name, recorded_at, sources=None):
+def write_transcript_markdown(
+    output_path, response, source_name, recorded_at, sources=None, upload_description=None
+):
     utterances = build_utterances(response)
     speaker_count = len({utterance["speaker"] for utterance in utterances if utterance["speaker"] is not None})
     duration_seconds = (response.get("usage") or {}).get("seconds", 0)
@@ -743,8 +900,10 @@ def write_transcript_markdown(output_path, response, source_name, recorded_at, s
         f"- Duration: {format_duration_seconds(duration_seconds)}",
         f"- Speakers: {speaker_count}",
         f"- Cost: {format_cost(response)}",
-        "",
     ]
+    if upload_description:
+        lines.append(f"- Upload: {upload_description}")
+    lines.append("")
     if sources:
         lines.insert(3, f"- Sources: {sources}")
     if not utterances:
@@ -798,15 +957,20 @@ def main():
             sources = record_until_interrupt(audio_path, microphone_device=microphone_device)
 
     audio_format = read_audio_format(audio_path)
-    ensure_audio_within_size_limit(audio_path)
-    response = transcribe_audio(audio_path, audio_format, api_key, arguments.model, arguments.speakers)
+    upload = prepare_upload(audio_path, audio_format, arguments.lossless)
+    warn_if_audio_exceeds_recommended_length(audio_path)
+    ensure_audio_within_size_limit(upload.path)
+    request_started_seconds = time.monotonic()
+    response = transcribe_audio(upload.path, upload.audio_format, api_key, arguments.model, arguments.speakers)
+    request_latency_seconds = time.monotonic() - request_started_seconds
     warn_if_speaker_labels_missing(response)
 
     SCRIPT_DIRECTORY.joinpath("transcripts").mkdir(exist_ok=True)
     markdown_path = SCRIPT_DIRECTORY / "transcripts" / f"{timestamp}.md"
     json_path = SCRIPT_DIRECTORY / "transcripts" / f"{timestamp}.json"
     write_transcript_markdown(
-        markdown_path, response, audio_path.name, started_at, sources
+        markdown_path, response, audio_path.name, started_at, sources,
+        describe_upload(upload, request_latency_seconds),
     )
     write_transcript_json(json_path, response)
     print(f"Wrote transcript: {markdown_path}")

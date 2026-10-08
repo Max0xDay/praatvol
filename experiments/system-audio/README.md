@@ -1,188 +1,189 @@
-# System audio tap experiment
+# System audio helper
 
-Minimal macOS recorder using a global stereo Core Audio process tap. It captures
-system playback, not the microphone, and writes an uncompressed PCM WAV. Playback
-remains audible. No virtual driver is installed, no default device is changed,
-and the tap and aggregate device are private and temporary.
+The helper captures system playback through a global Core Audio process tap. The helper leaves playback audible and uses no virtual drivers. The helper leaves the default device unchanged and creates private, temporary capture objects.
 
-Requires macOS 14.2 or later and Swift Command Line Tools. This build targets
-Apple Silicon; no Xcode project or Swift Package is needed.
+The helper writes uncompressed pulse-code modulation (PCM) in Waveform Audio File Format (WAV). The helper does not capture microphone audio or transcribe speech. The Python proof of concept (PoC) adds those features.
+
+The helper requires macOS 14.2 or later and the Apple Command Line Tools. The build targets Apple Silicon through `swiftc`, without an Xcode project or Swift package.
 
 ## Build
 
-From the repository root:
+Run the build from the repository root:
 
 ```bash
-cd experiments/system-audio
-./build.sh
+experiments/system-audio/build.sh
 ```
 
-The script compiles with warnings treated as errors, assembles `praatvol.app`, and
-ad-hoc signs it. Paths are relative to the script, so it can run from any working
-directory. Both the standalone `tap` binary and `praatvol.app/` are ignored by Git.
+The script treats compiler warnings as errors, creates `praatvol.app`, and signs the app with an ad-hoc signature. The build script resolves paths relative to the script. Git ignores the standalone `tap` binary and `praatvol.app`.
 
-The app bundle makes macOS attribute system-audio permission to the tool rather
-than the launching terminal; an embedded plist in a bare binary is insufficient.
+The app bundle gives macOS a separate identity for system-audio permission. A bare executable can inherit the terminal's identity, which can cause silent capture despite successful Core Audio calls.
 
 ## Run and permissions
 
-From `experiments/system-audio/`:
+Run commands below from `experiments/system-audio/`.
+
+Capture 20 seconds of system audio:
 
 ```bash
 open -n -W praatvol.app --args --seconds 20 /tmp/system-audio.wav
 ```
 
-`-n` launches a new instance; `-W` waits until it exits. `--seconds N` takes a finite positive number and
-stops automatically after that recording interval, using the same cleanup path
-as Ctrl+C. Launch and permission-prompt time are additional; WAV duration may
-include a small amount of setup/stop buffering. There is no window or Dock icon.
+`-n` starts a new app instance. `-W` waits for the app to exit. The helper has no window or Dock icon.
 
-Use an **absolute output path with `open`**: the app's working directory is not
-the terminal's. Relative paths are resolved against the recorder's working
-directory, and the final absolute path is logged. Existing WAV and log files
-are overwritten. The destination directory must already exist.
+`--seconds N` requires a finite positive number. The helper stops after the capture interval and performs cleanup. Launch time and permission prompts add time before capture. The WAV duration can include a small amount of setup and stop buffering.
 
-On first use, macOS asks for system-audio recording permission for
-**praatvol**. Allow it. The renamed bundle uses `com.praatvol.app`, so the
-system-audio permission prompt appears once more for the new identity. If denied, enable the app in
-**System Settings > Privacy & Security > Screen & System Audio Recording**
-(or **System Audio Recording**, depending on macOS), then relaunch it.
-Ad-hoc signing after a rebuild can cause macOS to request permission again.
-No permission-reset command is documented because the `tccutil` service name
-has not been verified. This experiment does not edit permission databases or
-terminal bundles.
+Use an absolute output path with `open`. The app's current directory differs from the terminal's current directory. The helper resolves relative paths against the app's current directory and reports the absolute path in the log.
 
-Omit `--seconds` to record until SIGINT:
+Create the destination directory before capture. Use a fresh output path for each run to avoid stale sidecar files. If the WAV or log already exists, the helper overwrites that file.
+
+On first use, macOS asks for system-audio access for **praatvol**. Allow access at the prompt. The bundle identity is `com.praatvol.app`; the new identity requires permission even if the previous helper had permission.
+
+If you denied access, enable **praatvol** in **System Settings > Privacy & Security > Screen & System Audio Recording**. Some macOS versions name the panel **System Audio Recording**. Relaunch the helper after the change.
+
+A rebuild and a new ad-hoc signature can trigger another permission prompt. The helper leaves permission databases and terminal bundles unchanged.
+
+### Stop an indefinite capture
+
+Omit `--seconds` to capture until an interrupt signal (SIGINT):
 
 ```bash
 open -n -W praatvol.app --args /tmp/system-audio.wav
 ```
 
-Ctrl+C in the launching terminal does not reliably reach an app launched by
-`open`; send SIGINT to the app's PID (or use the Python PoC, which does this):
+Ctrl+C in the terminal does not reliably reach the app through `open`. From another terminal, send SIGINT to the process identifier (PID):
 
 ```bash
 kill -INT "$(< /tmp/system-audio.wav.pid)"
 ```
 
-At startup the app writes `<out>.pid` with its own PID; it removes that file
-on clean shutdown or reported setup failure. On the first captured buffer it
-writes `<out>.start`, a Unix wall-clock float estimating the first sample time
-(callback time minus buffer duration). No `.start` file is written if there
-are no samples. Use a fresh output path for each run to avoid stale sidecars.
+The helper writes `<output>.pid` at startup. The helper removes the file after normal shutdown or a reported setup failure.
 
-Because app stdout is not visible through `open`, inspect the sibling log:
+At the first audio buffer, the helper writes `<output>.start` with an estimate of the first sample's Unix timestamp. The estimate subtracts buffer duration from callback time. If the helper receives no samples, the helper creates no `.start` file.
+
+### Logs and direct use
+
+Inspect the log beside the WAV:
 
 ```bash
 less /tmp/system-audio.wav.log
 ```
 
-It reports start, stop, errors, final path and file size, frame count, normalized
-peak, whether all samples were zero, and whether the peak was near-zero
-(`silent=true` for peak <= 0.00001). Zero frames are also reported as silent.
-Silence alone cannot distinguish idle playback from permission denial.
+The log reports capture times, errors, the output path, size, frame count, normalized peak, and silence. The helper marks a peak at or below 0.00001 as `silent=true`. Zero frames also count as silence. Silence alone cannot distinguish idle playback from denied permission.
 
-Direct runs retain Ctrl+C handling, but may still inherit terminal permissions:
+A direct run accepts Ctrl+C but can inherit terminal permissions:
 
 ```bash
 ./tap /tmp/system-audio.wav
-# Or stop automatically:
+```
+
+A direct run also accepts a duration:
+
+```bash
 ./tap --seconds 20 /tmp/system-audio.wav
 ```
 
-Normal timed/SIGINT shutdown exits 0; setup, writing, inspection, logging, or
-cleanup failures exit 1. `open -W` waits for termination but its exit status is
-not the recorder's exit status; use the log to diagnose recording errors.
+Normal timed shutdown and SIGINT exit with status zero. Reported setup, file, log, or cleanup failures exit with status one. The `open -W` exit status does not report the helper's exit status. Inspect the log for capture errors.
 
 ## Manual audio test
 
-1. Run `system_profiler SPAudioDataType` and note the default output.
-2. Play music through that device and leave it playing.
-3. Run `open -n -W praatvol.app --args --seconds 20 /tmp/system-audio.wav` and allow the
-   one-time system-audio permission prompt if shown.
-4. After the command returns, inspect the log and listen:
+1. Inspect the default output:
+
+   ```bash
+   system_profiler SPAudioDataType
+   ```
+
+2. Play music through the default output.
+3. Start the timed capture:
+
+   ```bash
+   open -n -W praatvol.app --args --seconds 20 /tmp/system-audio.wav
+   ```
+
+4. Allow access if macOS displays the prompt.
+5. After capture ends, inspect the log:
 
    ```bash
    less /tmp/system-audio.wav.log
+   ```
+
+6. Inspect the WAV format:
+
+   ```bash
    afinfo /tmp/system-audio.wav
+   ```
+
+7. Listen to the WAV:
+
+   ```bash
    afplay /tmp/system-audio.wav
    ```
 
-5. Confirm audible music and `all-zero=false, silent=false` in the log.
-6. Run `system_profiler SPAudioDataType` again: the default output should be
-   unchanged and no `praatvol private capture` aggregate device should remain.
+8. Confirm audible music and `all-zero=false, silent=false` in the log.
+9. Inspect the devices again:
+
+   ```bash
+   system_profiler SPAudioDataType
+   ```
+
+10. Confirm that the default output remains unchanged.
+11. Confirm that no `praatvol private capture` aggregate device remains.
 
 ## Python PoC integration
 
-Build this helper, then run `python record_and_transcribe.py --system-audio`
-from `experiments/poc/`. The PoC launches `praatvol.app` via `open`, captures the
-mic separately, stops both on Ctrl+C, aligns and mixes with numpy, and sends the
-mixed FLAC to OpenRouter. Both separate tracks are kept. The Python mixer accepts
-any tap sample rate/channel count; the mic uses the current default input unless
-selected with `--mic NAME`, and `--list-devices` lists inputs and defaults without
-recording. See [the PoC README](../poc/README.md).
+Build the helper before the first system-audio capture. From the repository root, activate the PoC virtual environment:
 
-**Use headphones for calls.** With speakers, the mic also picks up the remote
-voices, so they appear twice with a small delay, which can confuse speaker labels.
+```bash
+source experiments/poc/.venv/bin/activate
+```
+
+Capture microphone audio and system audio:
+
+```bash
+python experiments/poc/record_and_transcribe.py --system-audio
+```
+
+The PoC launches `praatvol.app` through `open` and captures the microphone separately. Ctrl+C stops both tracks. The Python mixer aligns the tracks and keeps both separate tracks.
+
+The mixer also writes a lossless Free Lossless Audio Codec (FLAC) archive. The default upload uses Opus at a bitrate that depends on duration. `--lossless` sends FLAC instead. Both formats use the guard for the estimated request body.
+
+The mixer accepts different tap rates and channel counts. The microphone uses the default input unless you select `--mic NAME`. `--list-devices` lists inputs and defaults without capture.
+
+Use headphones for calls. Speakers also send remote voices into the microphone track, which duplicates voices and can confuse speaker labels.
+
+See [the PoC guide](../poc/README.md) for setup, upload limits, and every flag.
 
 ## Verification on the development machine
 
-The renamed app rebuilt with zero warnings; shell syntax, plist validation and
-strict signature verification passed. Two roughly ten-second live Python
-dual-capture runs stopped via SIGINT, kept both raw tracks plus the mono mixed
-FLAC, removed the PID sidecar and left no helper process. Idle playback produced
-zero frames and correctly warned about silence. With a generated tone playing,
-the system track captured 9.568 s of 48 kHz stereo Float32 audio (peak 0.153),
-the microphone captured 9.216 s, and the mixed 16 kHz mono PCM_16 FLAC was
-9.673 s (peak 0.218). The system start-time sidecar was written. No live
-transcription was attempted; real-call quality remains unverified. Synthetic
-tests verified alignment for both start-offset directions, padding and no clipping.
+The renamed app compiled with zero warnings. Shell syntax checks, property-list validation, and strict signature verification passed.
 
-The following non-silent standalone results predate the bundle rename:
+Two live captures through Python lasted about ten seconds each. Both captures stopped through SIGINT, retained all three audio files, removed the PID file, and left no helper process.
 
-- `./build.sh` compiled with zero warnings; plist validation, shell syntax
-  validation, and `codesign --verify --strict` passed.
-- The previous helper's five-second `open -W` test returned automatically while
-  a generated 440 Hz tone played through `afplay`.
-  TCC logs confirmed a prompt for the previous bundle ID, followed by
-  `Allowed (User Consent)`. The command runner cannot view or click that prompt.
-- The WAV was **2,015,232 bytes**. `afinfo` reported **5.237333 seconds**, **48 kHz,
-  stereo, Float32 interleaved PCM**, 251,392 frames and 2,011,136 audio bytes.
-  The log reported `peak=0.25000393, all-zero=false, silent=false`.
-  Independent sample inspection found RMS 0.17676071: **non-silent system audio
-  was captured**. The final rebuilt app passed the same five-second test.
-- Direct-run SIGINT exited 0 and finalized an idle, zero-frame WAV; relative
-  output paths were logged as absolute. Invalid arguments were rejected.
-  Initial path assertions confused `/tmp` with its `/private/tmp` alias; after
-  comparing resolved paths, the runtime checks passed.
-- Audio-device reports before and after all runs were identical: MacBook Pro
-  Speakers remained the default output and default system output, no aggregate
-  device remained, and cleanup reported no errors.
-- No project lint/test commands were detected; compiler warning checks, plist
-  and shell validation, signature verification, and runtime checks were used.
+Idle playback produced zero frames and a silence warning. With a generated tone, the system track captured 9.568 seconds at 48 kilohertz (kHz), stereo, with peak 0.153. The microphone captured 9.216 seconds. The mixed FLAC contained 9.673 seconds at 16 kHz, mono, with peak 0.218.
+
+The helper wrote the start timestamp. Synthetic tests confirmed alignment for both offset directions, end padding, and peak limits. Those checks used no paid transcription request. Real-call quality still needs a manual check.
+
+Earlier standalone tests confirmed these results before the bundle rename:
+
+- A five-second capture produced non-silent audio with peak 0.25000393.
+- The WAV contained 5.237333 seconds at 48 kHz, stereo, with 32-bit floating-point samples.
+- Direct SIGINT shutdown finalized an idle WAV and returned status zero.
+- The helper rejected invalid arguments and reported absolute output paths.
+- Reports of devices before and after capture matched, and cleanup reported no errors.
 
 ## Known limits
 
-- Global stereo mix only: no per-app selection, separate tracks, or speaker labels.
-- The helper itself has no microphone, transcription or compression; the Python
-  PoC provides these through the optional dual-capture mode.
-- Permission denial can yield silence even when every Core Audio call succeeds.
-- Without playback, the tap may deliver no frames; start playback before judging
-  capture success.
-- WAV grows quickly (about 1.4 GB/hour at the tested format); no splitting or
-  large-file support is implemented. Stop before approaching WAV's 4 GB limit.
-- Synchronous file writing on the serial audio callback queue is suitable for a
-  small experiment, not a drop-out-resistant production recorder.
-- Stop before switching output devices; device-change recovery is not implemented.
-  The tap reads its format once at startup, has no device-change listener and does
-  not log routing changes explicitly. A change (including a Bluetooth call-mode
-  transition) may stop callbacks or cause a logged write error; this expectation
-  comes from code inspection, not a live switching test. The Python PoC warns on
-  errors, silence or a system track ending over five seconds before the mic,
-  retains readable audio and pads the remainder when mixing. Idle playback can
-  also produce that warning; a missing/unreadable WAV cannot be mixed.
-- Clean shutdown is implemented for Ctrl+C, timed completion, and reported
-  errors, not SIGKILL, crashes, or termination during setup. Private objects are
-  process-scoped and nonpersistent, but forced termination may leave an
-  unfinalized WAV.
-- Record other people's audio only with appropriate consent.
+- The helper captures global playback and lacks selection of individual apps.
+- The helper lacks microphone capture, compression, and speaker labels; the PoC supplies those features.
+- Denied permission can produce silence despite successful Core Audio calls.
+- If playback is idle, the tap can supply no frames.
+- WAV grows quickly: about 1.4 gigabytes (GB) per hour at the tested format.
+- Stop before the WAV approaches 4 GB; the helper lacks file splitting and explicit support for larger files.
+- The helper writes synchronously on the audio callback queue; the helper does not guarantee capture without dropped audio.
+- Stop capture before you change output devices; the helper lacks recovery for device changes.
+- The helper reads the format once at startup and lacks a listener for device changes.
+- A device change can stop callbacks or produce a write error; no live test verifies that behavior.
+- Python warns about helper errors, silence, and a system track that ends over five seconds before the microphone.
+- The mixer retains readable audio and adds silence at the end; an absent or unreadable WAV causes failure.
+- Normal cleanup covers timed shutdown, SIGINT, and reported errors, but excludes crashes and forced termination.
+- Forced termination can leave an unfinished WAV, although capture objects remain private and process-scoped.
+- Obtain appropriate consent before capture.

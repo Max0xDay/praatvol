@@ -209,5 +209,204 @@ class MicrophoneDeviceTests(unittest.TestCase):
             self.assertIn(f"- Sources: {sources}\n", output_path.read_text())
 
 
+
+class UploadEncodingTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.directory_path = Path(self.directory.name)
+        self.recordings_path = self.directory_path / "recordings"
+        self.recordings_path.mkdir()
+        patcher = patch.object(recording, "SCRIPT_DIRECTORY", self.directory_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.flac_path = self.recordings_path / "session.flac"
+        time_axis_seconds = numpy.arange(16000 * 30) / 16000
+        envelope = 0.5 + 0.5 * numpy.sin(2 * numpy.pi * 3 * time_axis_seconds)
+        noise = numpy.random.default_rng(1).standard_normal(time_axis_seconds.size)
+        samples = 0.3 * envelope * numpy.sin(2 * numpy.pi * 220 * time_axis_seconds) + 0.05 * noise
+        sf.write(self.flac_path, samples.astype("float32"), 16000, format="FLAC", subtype="PCM_16")
+
+    def test_opus_upload_is_smaller_and_near_64_kbps(self):
+        if "OPUS" not in sf.available_subtypes("OGG"):
+            self.skipTest("libsndfile was built without Opus support")
+        with contextlib.redirect_stdout(io.StringIO()):
+            upload = recording.prepare_upload(self.flac_path, "flac", lossless=False)
+        self.assertEqual(upload.path, self.recordings_path / "session.upload.ogg")
+        self.assertEqual(upload.audio_format, "ogg")
+        self.assertTrue(upload.path.is_file())
+        self.assertTrue(self.flac_path.is_file())
+        self.assertLess(upload.path.stat().st_size, self.flac_path.stat().st_size)
+        info = sf.info(upload.path)
+        self.assertEqual(info.format, "OGG")
+        self.assertEqual(info.samplerate, 16000)
+        self.assertEqual(info.channels, 1)
+        actual_kbps = recording.measure_kbps(upload.path.stat().st_size, info.duration)
+        self.assertLessEqual(abs(actual_kbps / 64 - 1), 0.10)
+
+    def test_lossless_sends_flac_without_encoding(self):
+        with patch.object(recording, "encode_opus_upload") as encode:
+            upload = recording.prepare_upload(self.flac_path, "flac", lossless=True)
+        encode.assert_not_called()
+        self.assertEqual(upload, recording.Upload(self.flac_path, "flac", "FLAC (lossless)"))
+
+    def test_main_with_lossless_sends_flac_and_skips_encoding(self):
+        arguments = ["record_and_transcribe.py", "--file", str(self.flac_path), "--lossless"]
+        with patch("sys.argv", arguments), patch.object(recording, "load_api_key", return_value="key"):
+            with patch.object(recording, "transcribe_audio", return_value={}) as transcribe:
+                with patch.object(recording, "encode_opus_upload") as encode:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        recording.main()
+        encode.assert_not_called()
+        self.assertEqual(transcribe.call_args.args[0], self.flac_path.resolve())
+        self.assertEqual(transcribe.call_args.args[1], "flac")
+
+    def test_size_guard_applies_to_the_uploaded_file(self):
+        oversized_path = self.recordings_path / "big.ogg"
+        with open(oversized_path, "wb") as oversized_file:
+            oversized_file.truncate(37_500_000)
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            with self.assertRaises(SystemExit):
+                recording.ensure_audio_within_size_limit(oversized_path)
+        self.assertIn("base64 JSON body", errors.getvalue())
+        self.assertIn("52,428,800", errors.getvalue())
+        self.assertIn("saved locally", errors.getvalue())
+
+    def test_compressed_inputs_pass_through_unchanged(self):
+        for audio_format in ["m4a", "mp3", "ogg"]:
+            with self.subTest(audio_format=audio_format):
+                source_path = self.recordings_path / f"memo.{audio_format}"
+                source_path.write_bytes(b"not decoded")
+                with patch.object(recording, "encode_opus_upload") as encode:
+                    upload = recording.prepare_upload(source_path, audio_format, lossless=False)
+                encode.assert_not_called()
+                self.assertEqual(upload.path, source_path)
+                self.assertEqual(upload.audio_format, audio_format)
+
+    def test_encode_failure_falls_back_to_flac_with_warning(self):
+        with patch.object(recording, "encode_opus_upload", side_effect=RuntimeError("no opus")):
+            with contextlib.redirect_stdout(io.StringIO()) as messages:
+                upload = recording.prepare_upload(self.flac_path, "flac", lossless=False)
+        self.assertEqual(upload.path, self.flac_path)
+        self.assertEqual(upload.audio_format, "flac")
+        self.assertIn("Warning:", messages.getvalue())
+
+    def test_calibration_reaches_each_target_on_probe(self):
+        samples = numpy.random.default_rng(2).standard_normal(16000 * 90).astype("float32") * 0.1
+        for target_bitrate_kbps in [64, 48, 32]:
+            with self.subTest(target_bitrate_kbps=target_bitrate_kbps):
+                level = recording.calibrate_opus_compression_level(samples, target_bitrate_kbps)
+                self.assertTrue(0.0 <= level <= 1.0)
+                probe_samples = samples[:16000 * recording.OPUS_CALIBRATION_SECONDS]
+                encoded_bytes = recording.encode_opus_bytes(probe_samples, level)
+                actual_kbps = recording.measure_kbps(len(encoded_bytes), len(probe_samples) / 16000)
+                self.assertLessEqual(abs(actual_kbps / target_bitrate_kbps - 1), 0.10)
+
+    def test_duration_selects_encoder_target_and_upload_label(self):
+        for duration_minutes, target_bitrate_kbps in [(59, 64), (60, 64), (61, 48), (90, 48), (91, 32)]:
+            with self.subTest(duration_minutes=duration_minutes):
+                mono_samples = unittest.mock.MagicMock()
+                mono_samples.size = duration_minutes * 60 * 16000
+                mono_samples.__len__.return_value = mono_samples.size
+                with patch.object(recording, "resample_audio", return_value=mono_samples):
+                    with patch.object(recording, "calibrate_opus_compression_level", return_value=0.5) as calibrate:
+                        with patch.object(recording, "encode_opus_bytes", return_value=b"encoded"):
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                upload = recording.prepare_upload(self.flac_path, "flac", lossless=False)
+                calibrate.assert_called_once_with(mono_samples, target_bitrate_kbps)
+                self.assertEqual(upload.codec_label, f"Opus ~{target_bitrate_kbps} kbps")
+                self.assertEqual(upload.path.read_bytes(), b"encoded")
+
+    def test_body_estimate_rounds_up_base64_groups_and_adds_overhead(self):
+        for file_bytes, base64_bytes in [(0, 0), (1, 4), (2, 4), (3, 4), (4, 8), (37_500_000, 50_000_000)]:
+            with self.subTest(file_bytes=file_bytes):
+                self.assertEqual(recording.estimate_request_body_bytes(file_bytes), base64_bytes + 1024)
+
+    def test_size_guard_accepts_safety_boundary_and_rejects_next_group(self):
+        upload_path = self.recordings_path / "boundary.ogg"
+        largest_audio_bytes = (50_000_000 - 1024) // 4 * 3
+        with upload_path.open("wb") as upload_file:
+            upload_file.truncate(largest_audio_bytes)
+        recording.ensure_audio_within_size_limit(upload_path)
+        with upload_path.open("wb") as upload_file:
+            upload_file.truncate(largest_audio_bytes + 1)
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            with self.assertRaises(SystemExit):
+                recording.ensure_audio_within_size_limit(upload_path)
+        self.assertIn("50,000,000", errors.getvalue())
+
+
+class LongAudioWarningTests(unittest.TestCase):
+    def run_warning(self, duration_seconds):
+        with patch.object(recording, "audio_duration_seconds", return_value=duration_seconds):
+            with contextlib.redirect_stdout(io.StringIO()) as messages:
+                recording.warn_if_audio_exceeds_recommended_length(Path("session.flac"))
+        return messages.getvalue()
+
+    def test_warns_only_above_tested_length(self):
+        self.assertEqual(
+            self.run_warning(91 * 60),
+            "Recording is longer than 90 minutes (beyond tested length); it may time out. "
+            "The full recording is saved locally.\n",
+        )
+        for duration_minutes in [20, 35, 36, 59, 60, 61, 90]:
+            with self.subTest(duration_minutes=duration_minutes):
+                self.assertEqual(self.run_warning(duration_minutes * 60), "")
+        self.assertIn("beyond tested length", self.run_warning(90 * 60 + 1))
+
+    def test_unreadable_duration_skips_warning_without_error(self):
+        with patch.object(recording, "audio_duration_seconds", return_value=None):
+            with contextlib.redirect_stdout(io.StringIO()) as messages:
+                recording.warn_if_audio_exceeds_recommended_length(Path("memo.m4a"))
+        self.assertIn("skipped", messages.getvalue())
+
+
+class TranscriptionResponseTests(unittest.TestCase):
+    def test_http_200_error_fails_clearly_without_success_message(self):
+        for provider_error in [{"message": "Provider returned 524", "code": 524}, "Provider returned 524", None]:
+            with self.subTest(provider_error=provider_error), tempfile.TemporaryDirectory() as directory:
+                upload_path = Path(directory) / "session.ogg"
+                upload_path.write_bytes(b"audio")
+                response = unittest.mock.Mock(status_code=200)
+                response.json.return_value = {"error": provider_error}
+                with patch.object(recording, "post_with_retries", return_value=response) as request:
+                    with contextlib.redirect_stdout(io.StringIO()) as messages:
+                        with contextlib.redirect_stderr(io.StringIO()) as errors:
+                            with self.assertRaises(SystemExit):
+                                recording.transcribe_audio(upload_path, "ogg", "key", recording.ELEVENLABS_SCRIBE_V2_MODEL, None)
+                self.assertIn("provider timed out or errored", errors.getvalue())
+                self.assertIn("recording is saved locally", errors.getvalue())
+                if provider_error is not None:
+                    self.assertIn("Provider returned 524", errors.getvalue())
+                self.assertNotIn("Transcription complete", messages.getvalue())
+                request.assert_called_once()
+                self.assertEqual(upload_path.read_bytes(), b"audio")
+
+    def test_http_200_transcript_passes_through(self):
+        with tempfile.TemporaryDirectory() as directory:
+            upload_path = Path(directory) / "session.ogg"
+            upload_path.write_bytes(b"audio")
+            response = unittest.mock.Mock(status_code=200)
+            response.json.return_value = {"text": "Hello", "words": []}
+            with patch.object(recording, "post_with_retries", return_value=response):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    transcript = recording.transcribe_audio(upload_path, "ogg", "key", recording.ELEVENLABS_SCRIBE_V2_MODEL, None)
+            self.assertEqual(transcript, {"text": "Hello", "words": []})
+
+
+class UploadDescriptionTests(unittest.TestCase):
+    def test_header_shows_upload_format_size_and_latency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            upload_path = Path(directory) / "session.upload.ogg"
+            upload_path.write_bytes(b"x" * 1_500_000)
+            upload = recording.Upload(upload_path, "ogg", "Opus ~64 kbps")
+            description = recording.describe_upload(upload, 27.13)
+            self.assertEqual(description, "Opus ~64 kbps, 1.50 MB, request took 27.1 s")
+            output_path = Path(directory) / "transcript.md"
+            recording.write_transcript_markdown(
+                output_path, {}, "session.flac", datetime(2026, 10, 8), upload_description=description
+            )
+            self.assertIn(f"- Upload: {description}\n", output_path.read_text())
+
 if __name__ == "__main__":
     unittest.main()
