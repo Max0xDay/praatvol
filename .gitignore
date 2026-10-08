@@ -5,3 +5,5 @@ transcripts/
 .venv/
 __pycache__/
 .DS_Store
+/experiments/system-audio/tap
+/experiments/system-audio/praatvol.app/
