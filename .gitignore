@@ -1,0 +1,7 @@
+.env
+recordings/
+transcripts/
+*.wav
+.venv/
+__pycache__/
+.DS_Store
