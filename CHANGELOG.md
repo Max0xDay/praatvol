@@ -20,7 +20,7 @@
 ### Fixes
 
 - The sidebar excludes unfinished attempts without transcripts or failures; Finder still provides access to those folders.
-- Saving the key again in Settings replaces an inaccessible Keychain item from an earlier build.
+- Settings replaces an inaccessible Keychain item from an earlier build when you save the key again.
 - Keychain read failures explain the access problem and ask you to save the key again in Settings.
 
 ## 0.1.0 — 2026-10-09

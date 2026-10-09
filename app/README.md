@@ -273,7 +273,7 @@ The live view shows a large elapsed timer.
 A microphone level bar shows a decibel (dB) value.
 Calls also show a system level bar.
 Each level bar shows **No signal** after three seconds without signal.
-The live view also shows the current file size and the duration tier for the default Advanced Audio Coding (AAC) upload.
+The live view also shows the current file size and the duration tier for the default AAC upload.
 Select **Stop** in the toolbar to stop capture and request a transcript.
 
 The app updates the meters about ten times per second.
