@@ -1,138 +1,192 @@
 # praatvol
 
-praatvol records conversations through a microphone, transcribes speech, and assigns speaker labels. Optional system audio adds call participants to the transcript. Each transcript includes timestamps, speaker turns, and the reported cost. OpenRouter sends the audio to ElevenLabs Scribe v2 for transcription.
+praatvol is a native macOS menu bar app for room and call transcripts.
+The app records your microphone and optional system audio, then transcribes the audio through OpenRouter.
+Each transcript includes timestamps, speaker turns, source details, and the reported cost.
+The app also imports audio files from other devices.
 
 ## Status
 
-**beta-0.0.1** is an early beta that runs from the terminal. praatvol requires macOS 14.2 or later. The system-audio helper currently targets Apple Silicon.
-
-## Features
-
-- praatvol records microphone audio until you press Ctrl+C.
-- The bundled `praatvol.app` helper captures optional system audio without virtual drivers or changes to audio routing.
-- praatvol supports different microphones and headsets, including separate devices for input and output.
-- `--mic NAME` selects a microphone; `--list-devices` lists devices and defaults.
-- Transcripts use speaker letters and timestamps.
-- praatvol uploads Opus audio and keeps a lossless Free Lossless Audio Codec (FLAC) archive locally.
-- A single request supports recordings up to about 90 minutes, with a bitrate that depends on duration.
-- praatvol writes Markdown transcripts and raw JavaScript Object Notation (JSON) responses.
-- OpenRouter reports a cost of about 0.11 United States dollars (USD) per audio hour for `elevenlabs/scribe-v2`.
+Version **0.1.0** is unreleased and targets macOS 14.2 or later on Apple Silicon.
+The app builds with Swift 6 and the Apple Command Line Tools, without Xcode or external packages.
+Capture permissions and real-call quality still require manual checks.
 
 ## Quick start
 
-Install Python 3.14 before setup. Install the Apple Command Line Tools if you need system audio.
-
-Clone the repository:
+Build the dev app from the repository root:
 
 ```bash
-git clone https://github.com/Max0xDay/praatvol.git
-cd praatvol
+app/scripts/build.sh dev
 ```
 
-Create a virtual environment:
+Open the dev app:
 
 ```bash
-python3 -m venv experiments/poc/.venv
+open "app/dist/praatvol Dev.app"
 ```
 
-Activate the virtual environment:
+Open **Settings…** from the sine-wave icon.
+Enter your OpenRouter application programming interface (API) key.
+Select **Save**.
+Select **Record room** or **Record call**.
+Allow the requested macOS permissions.
+Select **Stop recording** to save the audio and request a transcript.
+Select **Open praatvol…** to inspect the Now panel and library.
+For a failed item, save the correct key and select **Transcribe again…**.
+Confirm the new paid request before retry.
+
+Build the release app:
 
 ```bash
-source experiments/poc/.venv/bin/activate
+app/scripts/build.sh release
 ```
 
-Install the dependencies:
+Drag `app/dist/praatvol.app` into `/Applications`.
+The script also creates `app/dist/praatvol-0.1.0.zip` for distribution.
+The app uses an ad-hoc signature, not notarization.
+See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, storage, and tests.
+
+## Features
+
+- A sine-wave icon, status line, signal dots, and elapsed timer identify active capture.
+- The main window shows live meters, file size, duration tiers, conversion progress, upload percent, and transcription estimates.
+- The library lists saved items with metadata, status, transcript access, Finder access, and confirmed manual retry.
+- The start watchdog reports permission errors without a blocked interface.
+- Stop remains available throughout capture setup.
+- A call uses the microphone and an in-process tap through Core Audio.
+- A room uses only the microphone.
+- The app supports separate devices for input and output without virtual drivers.
+- The app keeps separate raw tracks and a lossless archive.
+- Advanced Audio Coding (AAC) uploads use duration-based target bitrates in an MPEG-4 Audio (M4A) file.
+- Small files can use lossless uploads instead.
+- The app sends one paid request through OpenRouter and never retries automatically.
+- Settings store the key in macOS Keychain and offer a model field and a microphone picker.
+- A completion notification opens the transcript when you click the notification.
+- Each dated folder contains Markdown transcripts and raw JavaScript Object Notation (JSON) responses.
+- The app saves failed response bodies and per-item metadata for the library.
+- Dev and release apps use separate identities, settings, keys, data, and logs.
+
+The release app stores items under `~/Documents/praatvol/YYYY/MM/DD/HH-mm-ss <kind>/`.
+The dev app uses `~/Documents/praatvol-dev/` instead.
+Select **Open transcripts in Finder** to browse the folders.
+
+## Limits and privacy
+
+Obtain appropriate consent before capture.
+OpenRouter and the selected provider receive your audio.
+Keep recordings and transcripts out of Git.
+Speaker letters identify voices within one request, not real names or persistent identities.
+
+The default model is `elevenlabs/scribe-v2`.
+Other transcription models can omit speaker labels.
+The public models API lacks reliable transcription identifiers, so the model field remains editable.
+
+The app keeps a Free Lossless Audio Codec (FLAC) archive if Apple's encoder supports FLAC.
+Otherwise, the app keeps a lossless Waveform Audio File Format (WAV) archive and reports the reason.
+Raw tracks start in Core Audio Format (CAF) at their native formats.
+After Stop, the app compresses raw tracks to FLAC and verifies every sample before CAF removal.
+If encoding or exact verification fails, the app retains the CAF rather than lose sample detail.
+Apple capture calls can defer cleanup until a blocked permission flow returns.
+
+The AAC targets are 64 kilobits per second (kbps) through 60 minutes and 48 kbps through 90 minutes.
+Beyond 90 minutes, the app targets 32 kbps and asks you to review the timeout warning.
+Earlier duration trials used Opus; long AAC requests and AAC quality still require checks.
+The app guards the full base64 request body at 50,000,000 bytes.
+The app preserves local audio after a failure.
+
+Stop capture before you change audio devices.
+The app lacks automatic recovery for output changes and drift correction between device clocks.
+See [the app guide](app/README.md#manual-test-checklist) for the manual checklist.
+See [the limits experiment](experiments/limits-test/README.md) for the earlier request trials.
+
+## Legacy CLI (experiments)
+
+The command-line interface (CLI) from **beta-0.0.1** remains under `experiments/poc/`.
+The Python beta uses a separate app helper and Opus uploads.
+See [the legacy guide](experiments/poc/README.md) for setup and commands.
+The native app requires no Python environment.
+
+## Contributing and CI
+
+Continuous integration (CI) checks each pull request into `main`.
+The workflow file is `.github/workflows/ci.yml`.
+
+### Branch flow
+
+1. Create a branch named `task/<name>` from `main`.
+2. Commit your changes to that branch.
+3. Open a pull request from the branch into `main`.
+4. Fix any failed check and push again.
+
+### Checks
+
+The workflow runs three checks.
+Each check name matches a job name:
+
+- `branch-name` fails if the branch name does not start with `task/`.
+- `lint` fails on any Swift format warning in `app/Sources` and `app/Tests`.
+- `build-test` fails on a build error, a test failure, a core line coverage below 70%, or an app build error.
+
+The `branch-name` check checks the name only on pull requests.
+On pushes to `main`, the check reports success without checking the name.
+
+### Run the checks locally
+
+Run these commands from the repository root.
+
+Check the Swift format rules:
 
 ```bash
-pip install -r experiments/poc/requirements.txt
+swift format lint --strict --recursive app/Sources app/Tests
 ```
 
-Copy the template for the application programming interface (API) key:
+Fix the format warnings:
 
 ```bash
-cp experiments/poc/.env.example experiments/poc/.env
+swift format format --in-place --recursive app/Sources app/Tests
 ```
 
-Open `experiments/poc/.env` in a text editor. Set the key from your OpenRouter account:
-
-```dotenv
-OPENROUTER_API_KEY=your_key_here
-```
-
-Grant microphone access to your terminal in **System Settings > Privacy & Security > Microphone**. Restart your terminal after the permission change. Activate the virtual environment again after the restart.
-
-Record microphone audio:
+Run the tests and the coverage gate:
 
 ```bash
-python experiments/poc/record_and_transcribe.py
+app/scripts/coverage.sh
 ```
 
-Press Ctrl+C to stop capture and start transcription.
+The script prints the `PraatvolCore` line coverage and fails below 70%.
 
-For system audio, build the helper from the repository root:
+Build the package:
 
 ```bash
-experiments/system-audio/build.sh
+cd app && swift build
 ```
 
-Record microphone audio and system audio:
+Build the dev and release apps:
 
 ```bash
-python experiments/poc/record_and_transcribe.py --system-audio
+app/scripts/build.sh dev
+app/scripts/build.sh release
 ```
 
-Allow system-audio access for **praatvol** at the macOS prompt. Use headphones for calls to avoid duplicate remote voices in the microphone track.
-
-List devices:
-
-```bash
-python experiments/poc/record_and_transcribe.py --list-devices
-```
-
-Select a microphone:
-
-```bash
-python experiments/poc/record_and_transcribe.py --mic "MacBook"
-```
-
-Transcribe an existing file:
-
-```bash
-python experiments/poc/record_and_transcribe.py --file /absolute/path/to/audio.flac
-```
-
-The script saves audio under `experiments/poc/recordings/` and transcripts under `experiments/poc/transcripts/`.
-
-See [the PoC guide](experiments/poc/README.md) for every flag, upload limits, and troubleshooting. See [the system-audio guide](experiments/system-audio/README.md) for helper permissions and tests.
-
-## Known limits and privacy
-
-- The beta runs from the terminal; the helper has no visible interface.
-- Speaker letters identify voices within one request, not real names or persistent identities across recordings.
-- Recordings beyond 90 minutes remain untested; provider timeouts can occur.
-- The size guard limits the estimated request body, including base64 audio and JSON metadata.
-- Transcripts contain private speech. Keep transcripts and audio out of Git.
-- OpenRouter and ElevenLabs receive the audio; praatvol does not provide local transcription.
-- Obtain appropriate consent before capture.
-- Stop capture before you change the output device; the helper lacks recovery for device changes.
-
-See [the limits experiment](experiments/limits-test/README.md) for verified requests and [the compression experiment](experiments/compression-quality/README.md) for quality measurements.
+The file `app/.swift-format` sets the indentation and line length for all format commands.
 
 ## Repo layout
 
-- `experiments/poc/` contains the beta script, dependencies, and offline tests.
-- `experiments/system-audio/` contains the Swift helper and the script that builds `praatvol.app`.
-- `experiments/compression-quality/` compares upload codecs against a lossless transcript reference.
-- `experiments/limits-test/` tests the request size and duration limits through OpenRouter.
+- `app/` contains the production Swift package, tests, scripts, and app guide.
+- `app/Sources/PraatvolCore/` contains job states, progress math, meters, the library, upload rules, transcripts, and audio conversion.
+- `app/Sources/Praatvol/` contains the main window, menu bar, capture, progress callbacks, settings, Keychain, and notifications.
+- `experiments/poc/` contains the legacy beta and its offline tests.
+- `experiments/system-audio/` contains the proven Swift helper for the legacy beta.
+- `experiments/compression-quality/` compares upload codecs against a lossless reference.
+- `experiments/limits-test/` tests request sizes and durations through OpenRouter.
 - `experiments/speaker-continuity/` tests speaker labels across separate requests.
 
 ## Roadmap ideas
 
 These ideas are unordered and are not commitments.
 
-- Organised storage: browse transcripts by date and time range.
-- Recognise the same people across recordings automatically.
-- Web upload: process recordings from other devices, such as iPhone Voice Memos.
-- Teams call capture: transcribe Teams calls.
-- Search and summaries across meetings with retrieval-augmented generation (RAG).
+- Add a transcript viewer with speaker names and export to Word, plain text (TXT), and Portable Document Format (PDF).
+- Browse transcripts by date and time range.
+- Recognise the same people across recordings.
+- Add web uploads for files from other devices.
+- Search and summarise meetings with retrieval-augmented generation (RAG).
 - Export transcripts to Teams and SharePoint.

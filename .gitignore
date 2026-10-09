@@ -10,3 +10,6 @@ __pycache__/
 /experiments/speaker-continuity/work/
 /experiments/compression-quality/work/
 /experiments/limits-test/work/
+/app/.build/
+/app/dist/
+*.app/
