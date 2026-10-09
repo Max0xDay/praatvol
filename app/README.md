@@ -108,8 +108,10 @@ The app preserves the microphone track before any conversion.
 ### Stop recording
 
 Select **Stop recording** to stop capture and request a transcript.
-The main window also offers a Stop button.
-During setup, select **Stop / Cancel setup** to cancel without a paid request.
+Select **Stop** in the main window toolbar for the same action.
+During setup, select **Stop / Cancel setup** in the menu or **Cancel** in the toolbar.
+Cancellation sends no paid request.
+Press Command-period for the toolbar action during setup or recording.
 
 The app processes one item at a time.
 Other capture and import actions remain unavailable until the current item completes.
@@ -136,13 +138,16 @@ A lossless archive preserves decoded samples but cannot restore detail from a lo
 
 ### Open praatvol
 
-Select **Open praatvol…** to open the main window with focus.
+Select **Open praatvol…** to open the two-pane main window with focus.
+Select an item in the sidebar to open the detail view.
 The app also opens the main window when a recording starts, without a focus change.
+The app selects the **Now** row when a job starts.
 Close the main window to keep the app in the menu bar.
 
 ### Recent
 
-Open **Recent** to see the five newest transcribed items.
+Open **Recent** to see the five newest transcribed items with their titles and dates.
+The list uses custom names after rename.
 Select an item to open its transcript in the default editor.
 If the submenu has no items, complete a transcription first.
 
@@ -171,6 +176,9 @@ Other models can return transcripts without speaker labels.
 
 The app keeps the key out of preferences, logs, transcripts, and audio files.
 The app keeps the key only in Keychain and transient memory.
+Ad-hoc dev builds change signature after each rebuild, which can block access to an earlier build's key.
+If a Keychain read fails, the app explains the failure and asks you to save the key again in Settings.
+Save the key again in Settings to replace an inaccessible Keychain item from an earlier build.
 Text fields support Command-X, Command-C, Command-V, and Command-A.
 If macOS requires login approval, allow the app under **System Settings > General > Login Items**.
 The app unregisters login access only if a registration exists.
@@ -185,36 +193,97 @@ During audio preparation or transcription, wait for the current job before Quit.
 
 ## Main window
 
-The main window uses native controls and materials in dark and light modes.
-The sine-wave brand identifies the app.
-The **Now** panel shows the current item and its steps.
+The main window uses a native two-pane layout in dark and light modes.
+The sidebar sits on the left, and the detail view sits on the right.
+A window toolbar sits above both panes.
 
-### Starting
+### Toolbar
+
+The toolbar offers these actions:
+
+- **Record Call** captures the microphone and system audio.
+- **Record Room** captures the microphone only.
+- **Import Audio** opens the audio file picker.
+- **Settings** opens Settings.
+
+During setup and recording, one red button replaces the capture and import buttons.
+The button shows **Cancel** during setup and **Stop** during recording.
+Press Command-period to use the red button.
+Settings remains available.
+The capture and import buttons remain unavailable during audio preparation, upload, and transcription.
+
+### Sidebar
+
+The sidebar shows a **Now** row at the top while a job runs.
+Select **Now** to see the live view.
+The app selects **Now** when a job starts.
+
+The sidebar groups items by day, newest first.
+The groups use **Today**, **Yesterday**, and dates such as **1 Oct 2026**.
+Each item shows a coloured kind icon and a title.
+The row also shows duration and speaker count if metadata supplies those values.
+A red mark identifies a failed item.
+
+Calls and rooms use the kind and start time as the generated title, such as **Room · 12:58**.
+Imported files use the file name without the extension.
+Custom names replace the generated title.
+
+The sidebar lists only transcribed items and failed items.
+Unfinished attempts without a transcript or failure stay on disk but do not appear in the sidebar.
+Select **Show in Finder** at the bottom of the sidebar to open the data root.
+Use Finder to reach unfinished attempts.
+
+### Item details
+
+Select an item in the sidebar to open the detail view.
+The detail view shows the kind icon, title, full date, and time.
+Select **Open Transcript** to open a completed transcript in the default editor.
+For an item without a transcript, **Transcribe** appears if the item has usable audio and no failure status.
+The sidebar normally hides such items.
+The **⋯** menu offers item actions.
+
+Transcribed items show tiles for **Duration**, **Speakers**, **Words**, and **Cost**.
+Cost uses United States dollars (USD) and shows a dash if metadata lacks a cost.
+The transcript preview shows up to 40 speaker lines with timestamps and colour-coded speaker labels.
+Select **Open Full Transcript** to open the complete Markdown file.
+The link appears when the preview reaches 40 lines, even if the transcript has exactly 40 speaker lines.
+
+A failed item shows a box with a plain-language summary and a recommended fix.
+Keychain and missing-key problems offer **Open Settings** as the main fix.
+Other failures offer **Transcribe Again…** if the item has usable audio.
+Keychain and missing-key problems also offer **Transcribe Again…** if the item has usable audio.
+Timeouts, including **Provider returned 524**, show a timeout summary.
+The app preserves the local audio after a failure.
+
+### Live view
+
+Select **Now** to inspect the current job in the detail view.
+The step bar shows **Record**, **Prepare**, **Upload**, **Transcribe**, and **Done**.
+File imports and retries skip **Record**.
+
+#### Starting
 
 The app requests permissions and starts capture.
-The panel offers **Cancel setup** throughout this step.
-A timeout appears in the panel without a blocked interface.
+Select **Cancel** in the toolbar to cancel setup without a paid request.
+A timeout appears in the live view without a blocked interface.
 
-### Recording
+#### Recording
 
-The panel shows these details:
-
-- A large elapsed timer.
-- Separate microphone and system meters for calls.
-- Root mean square (RMS) levels, peaks, and decibels relative to full scale (dBFS).
-- A per-track warning after three seconds without signal.
-- The current file size on disk.
-- The duration tier for the default AAC upload.
-- A Stop button.
+The live view shows a large elapsed timer.
+A microphone level bar shows a decibel (dB) value.
+Calls also show a system level bar.
+Each level bar shows **No signal** after three seconds without signal.
+The live view also shows the current file size and the duration tier for the default AAC upload.
+Select **Stop** in the toolbar to stop capture and request a transcript.
 
 The app updates the meters about ten times per second.
 The signal threshold identifies sound, not speech.
 Room noise can therefore produce a signal indication.
 Idle system playback can produce a silence warning without a permission fault.
 
-### Preparing audio
+#### Preparing audio
 
-The panel identifies conversion, the mix, normalization, archive creation, raw compression, and AAC encoding.
+The live view identifies conversion, the mix, normalization, archive creation, raw compression, and AAC encoding.
 A progress bar shows the fraction for the current measurable operation.
 The progress bar restarts for each operation, rather than a false estimate for the entire stage.
 The original copy and some file checks have no measurable fraction.
@@ -223,35 +292,66 @@ The app averages channels and converts the transcript audio to mono at 16 kilohe
 The app aligns call tracks with their first sample timestamps.
 The app limits the mixed peak to 0.95 before the archive stage.
 
-### Uploading
+#### Uploading
 
-The panel shows the audio format, audio size, request size, sent bytes, and percent.
+The live view shows a large percent, a progress bar, sent bytes, and the total request size.
 The upload bar uses `URLSessionTaskDelegate` callbacks from the real request.
 The request size includes base64 expansion and JavaScript Object Notation (JSON) metadata.
 
-### Transcribing
+#### Transcribing
 
-The panel shows an indeterminate indicator, elapsed seconds, and an estimate for the total time.
+The live view shows an estimated progress bar and an estimate for the remaining time.
+The progress bar stops at 95 percent until the request completes.
 Earlier trials measured about 68 seconds for 60 minutes and 88 seconds for 90 minutes.
 The estimate interpolates those trials, which used Opus rather than AAC.
 The estimate does not guarantee provider latency.
 
-### Saved or Failed
+#### Saved or Failed
 
-A saved item shows its duration, speaker count, word count, reported cost in United States dollars (USD), and model.
-Select **Open transcript** to open the Markdown file.
-Select **Show in Finder** to reveal the saved folder.
+After a job saves a transcript or records a failure, the app refreshes the library.
+The app removes **Now** and selects the item if the library contains the item folder.
+The detail view shows the transcript preview or the failure summary.
+If setup fails without an item folder, **Now** remains to show the error.
+The app keeps the model and other technical details in the saved metadata and transcript header.
 
-A failed item shows the error message.
-The app preserves the local audio.
-The panel offers **Retry…** if the saved item has usable audio.
-The Retry action uses the same confirmation as **Transcribe again…** in the library.
+### Rename and item actions
+
+Select an item in the sidebar.
+Press Return to rename the item.
+Alternatively, right-click the item and select **Rename**.
+In the detail view, click the title to rename the item.
+
+Press Return to save the name.
+Press Escape to cancel the change.
+Click elsewhere to save the name.
+Clear the name to restore the generated title.
+Enter the generated title to remove a custom name.
+The app trims whitespace and stores a single-line name with at most 120 characters.
+
+The app stores a custom name as `title` in `item.json`.
+The folder name on disk stays unchanged.
+For an older folder without `item.json`, rename creates `item.json`.
+The menu bar **Recent** list shows the item title and date.
+
+Right-click an item or open the **⋯** menu in the detail view to access these actions:
+
+- **Open Transcript** opens the Markdown file for a transcribed item.
+- **Copy Transcript** copies the complete Markdown text to the clipboard for a transcribed item.
+- **Rename** opens the name field in the sidebar.
+- **Transcribe Again…** requests another transcription if the item has usable audio and lacks a successful transcript status.
+- **Show in Finder** reveals the item folder.
+- **Move to Trash…** asks for confirmation before the app moves the whole item folder to the macOS Trash.
+
+You can restore the item folder from the Trash.
+The app disables **Move to Trash…** for the item of the active job.
+Press Delete in the sidebar to request the same confirmed action for the selected item.
 
 ## Library and retry
 
 The library scans the data root at launch, after a job, and when you open the main window.
-The library lists the newest items first.
-Each row shows the date, Call/Room/File kind, source name for files, duration, speakers, cost, and status.
+The sidebar groups transcribed items and failed items by day, newest first.
+Each row shows the kind icon, title, and available duration and speaker count.
+The detail view shows transcript statistics or a failure summary.
 
 The library uses these statuses:
 
@@ -259,10 +359,15 @@ The library uses these statuses:
 - **Failed** means the item metadata records a failure.
 - **Not transcribed** means the item lacks a transcript and has no failure status.
 
-Select **Open transcript** to open a completed transcript.
-Select **Show in Finder** to reveal an item folder.
-For failed or untranscribed audio, select **Transcribe again…** to request another transcription.
+The sidebar excludes **Not transcribed** items.
+Those item folders stay on disk.
+Use **Show in Finder** at the bottom of the sidebar to reach those folders through the data root.
+
+Select **Open Transcript** in the detail view to open a completed transcript.
+Select **Show in Finder** from an item menu to reveal the item folder.
+For a failed item with usable audio, select **Transcribe Again…**.
 Confirm **Transcribe again** before the app sends a paid request.
+The app disables retry during another job and for successfully transcribed items.
 
 Check your OpenRouter account after an ambiguous timeout before another request.
 A failed request can still incur a charge.
@@ -272,9 +377,10 @@ The app never retries a paid request automatically.
 Retry prefers the saved archive, then the upload copy, then the raw microphone or original file.
 If retry uses raw call tracks, the app mixes both tracks with the saved offset.
 The app keeps retries in the same item folder and uses the current settings.
-The library reads `item.json` rather than Markdown.
-Older folders remain visible with limited metadata and no invented cost.
-A malformed metadata file produces a visible library error.
+The library reads `item.json` rather than Markdown for metadata.
+Older folders with transcripts appear with limited metadata and no invented cost.
+A malformed metadata file prevents the library scan.
+The app logs the scan failure.
 
 ## Storage
 
@@ -305,7 +411,7 @@ praatvol/
     original.m4a
 ```
 
-`item.json` stores the date, kind, sources, duration, status, error, model, cost, speakers, words, and track offset.
+`item.json` stores the date, kind, sources, duration, status, error, model, cost, speakers, words, track offset, and optional title.
 `transcript.json` contains the successful raw response.
 `transcript-error.json` contains a failed raw response, including malformed JSON or an error inside a successful protocol response.
 A network failure without a response body cannot produce a raw response file.
@@ -379,7 +485,7 @@ Copy the new release bundle into Applications only if you want an installed upda
 
 ### Start timeout
 
-If setup exceeds eight seconds, inspect the permission named in the Now panel.
+If setup exceeds eight seconds, inspect the permission in the live view.
 Approve the pending macOS prompt.
 Check **System Settings > Privacy & Security**.
 Relaunch the app after a permission change.
@@ -434,7 +540,7 @@ Transparency, Consent, and Control (TCC) service names for system audio vary acr
 ### Transcription failures
 
 If OpenRouter rejects the key, save the correct key in Settings.
-Select **Transcribe again…** for the failed item.
+Select **Transcribe Again…** for the failed item.
 If the size guard rejects the request, turn off **Send lossless** or select a shorter file.
 If a provider failure occurs, inspect `transcript-error.json` locally.
 Keep the response file private because the response can contain transcript content.
@@ -485,8 +591,8 @@ Capture, permissions, notifications, and login access require a real desktop ses
 - Confirm the main window opens without a focus change during recording.
 - Stop capture and confirm each preparation operation appears.
 - Confirm the upload bar shows actual bytes and percent.
-- Confirm elapsed seconds and the estimate during transcription.
-- Confirm the saved summary matches the transcript header.
+- Confirm the estimated progress bar and the remaining time during transcription.
+- Confirm the detail view statistics match the transcript header.
 - Inspect raw FLAC files or the stated CAF fallback.
 - Import an M4A file and a WAV file.
 - Confirm the original bytes and each progress step.

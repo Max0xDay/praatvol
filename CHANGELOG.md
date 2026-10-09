@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- The native two-pane main window adds a sidebar, a detail view, and a window toolbar.
+- The toolbar offers Record Call, Record Room, Import Audio, and Settings, with a red Cancel or Stop button during capture.
+- Command-period cancels setup or stops capture.
+- The sidebar groups transcribed items and failed items by day, with kind icons, titles, duration, and speaker count.
+- Calls and rooms show their kind and start time; imported files show the file name without the extension.
+- The detail view adds transcript statistics and a preview of up to 40 speaker lines with timestamps and colour-coded labels.
+- Failed items show plain-language summaries and fixes, including timeout guidance.
+- The live view adds level bars, a step bar, upload percent, and estimated transcription progress.
+- Rename stores a custom title in `item.json` without a folder name change, and Recent shows titles and dates.
+- Copy Transcript copies the complete Markdown text to the clipboard.
+- Move to Trash asks for confirmation and moves the whole item folder to the macOS Trash for restoration.
+- The Delete key requests the same confirmed action, except for the item of the active job.
+
+### Fixes
+
+- The sidebar excludes unfinished attempts without transcripts or failures; Finder still provides access to those folders.
+- Settings replaces an inaccessible Keychain item from an earlier build when you save the key again.
+- Keychain read failures explain the access problem and ask you to save the key again in Settings.
+
 ## 0.1.0 — 2026-10-09
 
 This version adds a native menu bar app for macOS 14.2 or later on Apple Silicon.
