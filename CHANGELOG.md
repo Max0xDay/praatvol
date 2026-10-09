@@ -37,6 +37,7 @@ The Python beta remains unchanged under `experiments/`.
 - Swift Package Manager (SwiftPM) builds, Apple-only icon tools, and ad-hoc signatures require no Xcode project.
 - Offline Swift tests cover core rules, parsing, transcripts, paths, codecs, channel averages, and alignment.
 - New core tests cover job transitions, progress, estimates, duration hints, meters, library metadata, status, retry, and raw verification.
+- GitHub Actions runs lint, build, tests with a 70% coverage gate, and a `task/` branch-name check on each pull request into `main`.
 
 ### Fixes
 
@@ -54,7 +55,7 @@ The Python beta remains unchanged under `experiments/`.
 - Earlier duration trials used Opus, not AAC; AAC quality and long AAC requests still require checks.
 - Raw tracks retain CAF if FLAC cannot preserve the samples exactly.
 - Apple supplies no cancellation API for blocked capture calls, so those calls can defer resource cleanup.
-- The 19 offline tests pass with 93.41% core line coverage, above the 70% target.
+- The 19 offline tests pass, and core line coverage exceeds the 70% target.
 - The app guide includes a full checklist for permissions, progress, retries, and both bundle identities.
 - If the FLAC encoder is unavailable, the app reports the WAV fallback in the transcript header.
 - Capture lacks automatic recovery for device changes and drift correction between device clocks.

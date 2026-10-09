@@ -1,7 +1,9 @@
 import Foundation
 
 public enum ItemStatus: String, Codable, Sendable {
-    case transcribed = "Transcribed", failed = "Failed", notTranscribed = "Not transcribed"
+    case transcribed = "Transcribed"
+    case failed = "Failed"
+    case notTranscribed = "Not transcribed"
 }
 
 public struct ItemMetadata: Codable, Equatable, Sendable {
@@ -17,7 +19,9 @@ public struct ItemMetadata: Codable, Equatable, Sendable {
     public var wordCount: Int = 0
     public var offsetSeconds: Double = 0
     public init(date: Date, kind: String, sources: String) {
-        self.date = date; self.kind = kind; self.sources = sources
+        self.date = date
+        self.kind = kind
+        self.sources = sources
     }
 }
 
@@ -66,8 +70,15 @@ public enum Library {
     public static func scan(root: URL) throws -> [LibraryItem] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
         var traversalError: Error?
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles], errorHandler: { _, error in traversalError = error; return false }) else {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.creationDateKey],
+                options: [.skipsHiddenFiles],
+                errorHandler: { _, error in
+                    traversalError = error
+                    return false
+                })
+        else {
             throw PraatvolError("Cannot scan the library folder.")
         }
         var folders = Set<URL>()
@@ -83,7 +94,8 @@ public enum Library {
                 let values = try folder.resourceValues(forKeys: [.creationDateKey])
                 // #COMPLETION_DRIVE: Legacy folders lack metadata; creation date and folder label identify the item.
                 // #SUGGEST_VERIFY: Check imported beta folders; no Markdown parsing or invented cost is used.
-                metadata = ItemMetadata(date: values.creationDate ?? .distantPast,
+                metadata = ItemMetadata(
+                    date: values.creationDate ?? .distantPast,
                     kind: String(folder.lastPathComponent.dropFirst(9)), sources: "Legacy audio")
             }
             return LibraryItem(folder: folder, metadata: metadata)
@@ -91,6 +103,7 @@ public enum Library {
     }
     private static func isItemFile(_ name: String) -> Bool {
         if name.hasPrefix("original.") { return true }
-        return ["item.json", "transcript.md", "audio.flac", "audio.wav", "upload.m4a", "mic.caf", "mic.flac"].contains(name)
+        return ["item.json", "transcript.md", "audio.flac", "audio.wav", "upload.m4a", "mic.caf", "mic.flac"].contains(
+            name)
     }
 }

@@ -1,5 +1,5 @@
-import AppKit
 import AVFoundation
+import AppKit
 import PraatvolCore
 
 private enum AppState {
@@ -68,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add("Record call (mic + system audio)", action: #selector(recordCall), to: menu, enabled: state == .idle)
         add("Record room (mic only)", action: #selector(recordRoom), to: menu, enabled: state == .idle)
         if state.canStop {
-            add(state == .starting ? "Stop / Cancel setup" : "Stop recording", action: #selector(stopRecording), to: menu)
+            add(
+                state == .starting ? "Stop / Cancel setup" : "Stop recording", action: #selector(stopRecording),
+                to: menu)
         }
         menu.addItem(.separator())
         add("Transcribe file…", action: #selector(transcribeFile), to: menu, enabled: state == .idle)
@@ -76,8 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let recent = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
         let recentMenu = NSMenu()
         for item in viewModel.library.filter({ $0.status == .transcribed }).prefix(5) {
-            let entry = NSMenuItem(title: "\(item.metadata.date.formatted(date: .abbreviated, time: .shortened)) · \(item.metadata.kind)",
-                                  action: #selector(openRecent(_:)), keyEquivalent: "")
+            let entry = NSMenuItem(
+                title: "\(item.metadata.date.formatted(date: .abbreviated, time: .shortened)) · \(item.metadata.kind)",
+                action: #selector(openRecent(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = item.transcript
             recentMenu.addItem(entry)
@@ -144,8 +147,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSBezierPath(ovalIn: NSRect(x: 18, y: 13, width: 4, height: 4)).fill()
             }
             if AppIdentity.isDevelopment {
-                ("D" as NSString).draw(at: NSPoint(x: 23, y: 3), withAttributes: [
-                    .font: NSFont.boldSystemFont(ofSize: 9), .foregroundColor: recording ? NSColor.systemRed : NSColor.black])
+                ("D" as NSString).draw(
+                    at: NSPoint(x: 23, y: 3),
+                    withAttributes: [
+                        .font: NSFont.boldSystemFont(ofSize: 9),
+                        .foregroundColor: recording ? NSColor.systemRed : NSColor.black,
+                    ])
             }
             return true
         }
@@ -168,8 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.recorder = recorder
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self, self.startIdentifier == identifier else { return }
-            self.cancelSetup(message: "Capture setup exceeded 8 seconds. Check Microphone permission" +
-                (call ? " and Screen & System Audio Recording permission" : "") + " in System Settings > Privacy & Security. Approve the prompt, then retry.")
+            self.cancelSetup(
+                message: "Capture setup exceeded 8 seconds. Check Microphone permission"
+                    + (call ? " and Screen & System Audio Recording permission" : "")
+                    + " in System Settings > Privacy & Security. Approve the prompt, then retry.")
         }
         startWatchdog = watchdog
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: watchdog)
@@ -198,7 +207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         recorder.cancelStart()
                         self.captureQueue.async {
                             _ = recorder.stop()
-                            if let folder = recorder.folder { self.saveFailure(folder: folder, message: "Capture setup was cancelled.") }
+                            if let folder = recorder.folder {
+                                self.saveFailure(folder: folder, message: "Capture setup was cancelled.")
+                            }
                             DispatchQueue.main.async {
                                 self.reloadLibrary()
                                 if self.viewModel.identifier == identifier { self.viewModel.folder = recorder.folder }
@@ -212,12 +223,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.viewModel.advance(.recording)
                     self.viewModel.folder = recorder.folder
                     self.recordingDate = Date()
-                    self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
+                    self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                        self?.tick()
+                    }
                     self.refreshMenu()
                 }
             } catch {
                 AppLog.shared.event("capture-start-failed", code: (error as NSError).code)
-                if let folder = recorder.folder { self.saveFailure(folder: folder, message: error.localizedDescription) }
+                if let folder = recorder.folder {
+                    self.saveFailure(folder: folder, message: error.localizedDescription)
+                }
                 DispatchQueue.main.async {
                     self.reloadLibrary()
                     guard self.startIdentifier == identifier else {
@@ -225,7 +240,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         return
                     }
                     self.viewModel.folder = recorder.folder
-                    self.cancelSetup(message: error.localizedDescription + "\n" + (call ? Recorder.systemHelp : Recorder.microphoneHelp))
+                    self.cancelSetup(
+                        message: error.localizedDescription + "\n"
+                            + (call ? Recorder.systemHelp : Recorder.microphoneHelp))
                 }
             }
         }
@@ -267,7 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopRecording() {
-        if state == .starting { cancelSetup(message: "Capture setup was cancelled. No paid request was sent."); return }
+        if state == .starting {
+            cancelSetup(message: "Capture setup was cancelled. No paid request was sent.")
+            return
+        }
         finishCapture(quitAfterSave: false)
     }
 
@@ -290,8 +310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if quitAfterSave { self.terminate() }
                     return
                 }
-                if quitAfterSave { self.saveBeforeQuit(capture) }
-                else { self.process(capture: capture, file: nil, preferences: preferences) }
+                if quitAfterSave {
+                    self.saveBeforeQuit(capture)
+                } else {
+                    self.process(capture: capture, file: nil, preferences: preferences)
+                }
             }
         }
     }
@@ -322,7 +345,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func process(capture: CapturedItem?, file: URL?, preferences: Preferences, retryItem: PraatvolCore.LibraryItem? = nil) {
+    private func process(
+        capture: CapturedItem?, file: URL?, preferences: Preferences, retryItem: PraatvolCore.LibraryItem? = nil
+    ) {
         state = .transcribing
         if let file { viewModel.reset(title: "File: \(file.lastPathComponent)") }
         if let retryItem { viewModel.reset(title: retryItem.metadata.kind) }
@@ -334,9 +359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 if let file {
                     let date = Date()
-                    let created = try Storage.createFolder(root: AppIdentity.root, date: date, kind: "File: \(file.lastPathComponent)")
+                    let created = try Storage.createFolder(
+                        root: AppIdentity.root, date: date, kind: "File: \(file.lastPathComponent)")
                     folder = created
-                    try Library.save(ItemMetadata(date: date, kind: "File: \(file.lastPathComponent)", sources: file.lastPathComponent), folder: created)
+                    try Library.save(
+                        ItemMetadata(
+                            date: date, kind: "File: \(file.lastPathComponent)", sources: file.lastPathComponent),
+                        folder: created)
                 }
                 guard let itemFolder = folder else { throw PraatvolError("No source audio exists.") }
                 viewModel.folder = itemFolder
@@ -361,20 +390,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let key = try Keychain.read()
                 let completion = try await Task.detached {
-                    try await TranscriptionJob.transcribe(item: prepared, preferences: preferences, apiKey: key, report: report)
+                    try await TranscriptionJob.transcribe(
+                        item: prepared, preferences: preferences, apiKey: key, report: report)
                 }.value
                 if viewModel.state.step == .uploading { viewModel.advance(.transcribing) }
                 viewModel.advance(.saved)
                 viewModel.summary = completion.metadata
-                viewModel.message = completion.hasSpeakerLabels ? "The transcript is ready." : "The transcript has no speaker labels."
+                viewModel.message =
+                    completion.hasSpeakerLabels ? "The transcript is ready." : "The transcript has no speaker labels."
                 notifications.post(title: "Transcript ready", message: viewModel.message, file: completion.transcript)
             } catch {
                 AppLog.shared.event("transcription-failed", code: (error as NSError).code)
                 if let folder { saveFailure(folder: folder, message: error.localizedDescription) }
                 viewModel.advance(.failed)
                 viewModel.message = error.localizedDescription
-                notifications.post(title: "Transcription failed", message: error.localizedDescription +
-                    "\nThe audio stays saved. No paid request was retried.", file: folder, failure: true)
+                notifications.post(
+                    title: "Transcription failed",
+                    message: error.localizedDescription + "\nThe audio stays saved. No paid request was retried.",
+                    file: folder, failure: true)
             }
             finishJob()
         }
@@ -383,7 +416,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func approveUpload(_ item: PreparedItem) -> Bool {
         var warnings = item.warnings
         if UploadRules.isBeyondTestedLength(item.durationSeconds) {
-            warnings.append("Beyond tested length; may time out; recording saved locally. The AAC duration rule follows Opus trials, not AAC trials.")
+            warnings.append(
+                "Beyond tested length; may time out; recording saved locally. The AAC duration rule follows Opus trials, not AAC trials."
+            )
         }
         if warnings.isEmpty { return true }
         NSApp.activate(ignoringOtherApps: true)
@@ -465,7 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateDiskSize(_ folder: URL) {
         do {
-            let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])
+            let files = try FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.fileSizeKey])
             viewModel.diskBytes = try files.reduce(0) { count, file in
                 count + Int64(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
             }
@@ -476,7 +512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .idle, item.canRetry else { return }
         let alert = NSAlert()
         alert.messageText = "Transcribe again?"
-        alert.informativeText = "OpenRouter charges for a new request. A failed or timed-out request may already have a charge. Check your account first."
+        alert.informativeText =
+            "OpenRouter charges for a new request. A failed or timed-out request may already have a charge. Check your account first."
         alert.addButton(withTitle: "Transcribe again")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -494,12 +531,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openRecent(_ sender: NSMenuItem) {
         if let file = sender.representedObject as? URL { openFile(file) }
     }
-    @objc private func openMainWindow() { reloadLibrary(); mainWindow.show(activate: true) }
+    @objc private func openMainWindow() {
+        reloadLibrary()
+        mainWindow.show(activate: true)
+    }
 
     @objc private func openTranscripts() {
         do {
             try FileManager.default.createDirectory(at: AppIdentity.root, withIntermediateDirectories: true)
-            if !NSWorkspace.shared.open(AppIdentity.root) { throw PraatvolError("Finder could not open the transcript folder.") }
+            if !NSWorkspace.shared.open(AppIdentity.root) {
+                throw PraatvolError("Finder could not open the transcript folder.")
+            }
         } catch {
             AppLog.shared.event("open-folder-failed", code: (error as NSError).code)
             showAlert(error.localizedDescription)
@@ -510,7 +552,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() {
         switch state {
         case .recording:
-            if confirm("Stop capture and quit?", message: "The app saves the audio before quit. The app does not send a transcription request.") {
+            if confirm(
+                "Stop capture and quit?",
+                message: "The app saves the audio before quit. The app does not send a transcription request.")
+            {
                 finishCapture(quitAfterSave: true)
             }
         case .starting:

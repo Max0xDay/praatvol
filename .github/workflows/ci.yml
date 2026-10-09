@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  branch-name:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the task branch name
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "Skipping the branch name check for $EVENT_NAME events."
+            exit 0
+          fi
+          if [[ "$HEAD_REF" == task/* ]]; then
+            echo "Branch $HEAD_REF follows the task/<name> convention."
+            exit 0
+          fi
+          echo "::error::Branch '$HEAD_REF' must start with task/. Rename the branch to task/<name>."
+          exit 1
+
+  lint:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # #COMPLETION_DRIVE: The runner default Xcode provides swift-format; the local version is 6.0.3.
+      # #SUGGEST_VERIFY: If strict lint fails only on the runner, compare swift-format versions.
+      - name: Lint Swift sources
+        run: swift format lint --strict --recursive app/Sources app/Tests
+
+  build-test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the package
+        working-directory: app
+        run: swift build
+      # #COMPLETION_DRIVE: The coverage script runs the test suite once and enforces the 70% gate.
+      - name: Run tests with the coverage gate
+        run: app/scripts/coverage.sh
+      # #COMPLETION_DRIVE: Ad-hoc signing and the icon generation run on a headless macos-15 runner.
+      # #SUGGEST_VERIFY: If icon generation fails on the runner, check AppKit drawing without a window server.
+      - name: Build the dev app
+        run: app/scripts/build.sh dev
+      - name: Build the release app
+        run: app/scripts/build.sh release

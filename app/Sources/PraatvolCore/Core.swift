@@ -27,7 +27,9 @@ public enum UploadRules {
         guard estimatedBodyBytes(audioBytes: audioBytes) <= maximumBodyBytes else { throw sizeError() }
     }
     private static func sizeError() -> PraatvolError {
-        PraatvolError("The base64 request exceeds the 50,000,000-byte safety limit. The audio stays saved locally. Select a shorter file or turn off Send lossless.")
+        PraatvolError(
+            "The base64 request exceeds the 50,000,000-byte safety limit. The audio stays saved locally. Select a shorter file or turn off Send lossless."
+        )
     }
 }
 
@@ -60,7 +62,7 @@ public enum TranscriptionRequest {
         try UploadRules.validate(audioBytes: audio.count)
         var payload: [String: Any] = [
             "model": model, "input_audio": ["data": audio.base64EncodedString(), "format": format],
-            "response_format": "verbose_json", "timestamp_granularities": ["segment", "word"]
+            "response_format": "verbose_json", "timestamp_granularities": ["segment", "word"],
         ]
         if model.hasPrefix("elevenlabs/") {
             payload["provider"] = ["options": ["elevenlabs": ["diarize": true]]]
@@ -78,7 +80,9 @@ public struct Turn: Equatable, Sendable {
     public let speaker: String?
     public var text: String
     public init(start: Double, speaker: String?, text: String) {
-        self.start = start; self.speaker = speaker; self.text = text
+        self.start = start
+        self.speaker = speaker
+        self.text = text
     }
 }
 
@@ -89,17 +93,23 @@ public struct Transcript {
 
     public static func parse(_ response: Data, statusCode: Int) throws -> Transcript {
         guard statusCode == 200 else {
-            throw PraatvolError(statusCode == 401 ? "OpenRouter rejected the API key. Check Settings." : "OpenRouter returned HTTP \(statusCode). The audio stays saved locally.")
+            throw PraatvolError(
+                statusCode == 401
+                    ? "OpenRouter rejected the API key. Check Settings."
+                    : "OpenRouter returned HTTP \(statusCode). The audio stays saved locally.")
         }
         let object: Any
-        do { object = try JSONSerialization.jsonObject(with: response) }
-        catch { throw PraatvolError("OpenRouter returned invalid JSON. The audio stays saved locally.") }
+        do { object = try JSONSerialization.jsonObject(with: response) } catch {
+            throw PraatvolError("OpenRouter returned invalid JSON. The audio stays saved locally.")
+        }
         guard let dictionary = object as? [String: Any] else {
             throw PraatvolError("OpenRouter returned an invalid JSON response.")
         }
         if dictionary.keys.contains("error") {
             // Never surface an untrusted provider body: it can contain private audio text.
-            throw PraatvolError("OpenRouter reported a provider failure or timeout. The audio stays saved locally. No request was retried.")
+            throw PraatvolError(
+                "OpenRouter reported a provider failure or timeout. The audio stays saved locally. No request was retried."
+            )
         }
         let words = dictionary["words"] as? [[String: Any]] ?? []
         let segments = dictionary["segments"] as? [[String: Any]] ?? []
@@ -124,7 +134,8 @@ public struct Transcript {
     private static func group(_ items: [[String: Any]], textKey: String) -> [Turn] {
         var turns: [Turn] = []
         for item in items {
-            guard let text = (item[textKey] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
+            guard let text = (item[textKey] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
+            else { continue }
             let start = item["start"] as? Double ?? 0
             let speaker = speakerValue(item["speaker"])
             if continues(turns.last, speaker: speaker) {
@@ -141,8 +152,10 @@ public struct Transcript {
         return previous?.speaker == speaker
     }
 
-    public func markdown(date: Date, durationSeconds: Double, model: String, sources: String,
-                         archiveName: String, uploadDescription: String) -> String {
+    public func markdown(
+        date: Date, durationSeconds: Double, model: String, sources: String,
+        archiveName: String, uploadDescription: String
+    ) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
@@ -152,10 +165,12 @@ public struct Transcript {
             return first < second
         }
         let costText = costUsd.map { String(format: "$%.6f (OpenRouter)", $0) } ?? "not reported"
-        var lines = ["# Transcript: \(dateText)", "", "- Source audio: \(archiveName)",
-                     "- Sources: \(sources)", "- Date/time: \(dateText)",
-                     "- Duration: \(Self.duration(durationSeconds))", "- Speakers: \(speakers.count)",
-                     "- Model: \(model)", "- Cost: \(costText)", "- Upload: \(uploadDescription)"]
+        var lines = [
+            "# Transcript: \(dateText)", "", "- Source audio: \(archiveName)",
+            "- Sources: \(sources)", "- Date/time: \(dateText)",
+            "- Duration: \(Self.duration(durationSeconds))", "- Speakers: \(speakers.count)",
+            "- Model: \(model)", "- Cost: \(costText)", "- Upload: \(uploadDescription)",
+        ]
         if !hasSpeakerLabels { lines.append("- Speaker labels: absent; lines use Speaker ?.") }
         lines.append("")
         if turns.isEmpty { lines.append("No speech was detected.") }

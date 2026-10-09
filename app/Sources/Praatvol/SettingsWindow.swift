@@ -7,7 +7,8 @@ final class SettingsWindow: NSObject {
     private let apiKey = NSSecureTextField()
     private let model = NSComboBox()
     private let microphone = NSPopUpButton()
-    private let lossless = NSButton(checkboxWithTitle: "Send lossless (FLAC; WAV if FLAC is unavailable)", target: nil, action: nil)
+    private let lossless = NSButton(
+        checkboxWithTitle: "Send lossless (FLAC; WAV if FLAC is unavailable)", target: nil, action: nil)
     private let launchAtLogin = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private var devices: [MicrophoneDevice] = []
 
@@ -42,25 +43,33 @@ final class SettingsWindow: NSObject {
     }
 
     private func createWindow() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 365),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 365),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "\(AppIdentity.name) Settings"
         window.isReleasedWhenClosed = false
         window.center()
         let save = NSButton(title: "Save", target: self, action: #selector(saveSettings))
         save.keyEquivalent = "\r"
-        let note = NSTextField(wrappingLabelWithString: "The key stays in Keychain. The model field accepts a transcription model identifier. The public models API does not reliably list transcription models. Launch at login requires an installed app. Settings affect the next item.")
-        let stack = NSStackView(views: [row("OpenRouter API key", apiKey), row("Model", model),
-                                     row("Microphone", microphone), lossless, launchAtLogin, note, save])
+        let note = NSTextField(
+            wrappingLabelWithString:
+                "The key stays in Keychain. The model field accepts a transcription model identifier. The public models API does not reliably list transcription models. Launch at login requires an installed app. Settings affect the next item."
+        )
+        let stack = NSStackView(views: [
+            row("OpenRouter API key", apiKey), row("Model", model),
+            row("Microphone", microphone), lossless, launchAtLogin, note, save,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView?.addSubview(stack)
         if let content = window.contentView {
-            NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
                 stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20)])
+                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            ])
         }
         self.window = window
     }

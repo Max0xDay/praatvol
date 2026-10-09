@@ -14,10 +14,13 @@ struct MicrophoneDevice {
 }
 
 enum AudioDevices {
-    static func property<Value>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
-                                scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
-                                value: inout Value) throws {
-        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    static func property<Value>(
+        _ object: AudioObjectID, selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
+        value: inout Value
+    ) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
         var size = UInt32(MemoryLayout<Value>.size)
         let status = withUnsafeMutablePointer(to: &value) {
             AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0)
@@ -26,7 +29,8 @@ enum AudioDevices {
     }
 
     static func microphones() throws -> [MicrophoneDevice] {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
         let system = AudioObjectID(kAudioObjectSystemObject)
@@ -40,19 +44,23 @@ enum AudioDevices {
                 var uniqueIdentifier: CFString = "" as CFString
                 try property(identifier, selector: kAudioObjectPropertyName, value: &name)
                 try property(identifier, selector: kAudioDevicePropertyDeviceUID, value: &uniqueIdentifier)
-                microphones.append(MicrophoneDevice(identifier: identifier, uniqueIdentifier: uniqueIdentifier as String, name: name as String))
+                microphones.append(
+                    MicrophoneDevice(
+                        identifier: identifier, uniqueIdentifier: uniqueIdentifier as String, name: name as String))
             }
         }
         return microphones
     }
 
     private static func hasInput(_ identifier: AudioDeviceID) throws -> Bool {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
         try checkStatus(AudioObjectGetPropertyDataSize(identifier, &address, 0, nil, &size), "Read input channels")
         guard size > 0 else { return false }
-        let memory = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        let memory = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
         defer { memory.deallocate() }
         try checkStatus(AudioObjectGetPropertyData(identifier, &address, 0, nil, &size, memory), "Read input streams")
         let buffers = UnsafeMutableAudioBufferListPointer(memory.assumingMemoryBound(to: AudioBufferList.self))
@@ -68,7 +76,9 @@ enum AudioDevices {
             return device
         }
         var identifier = AudioDeviceID(kAudioObjectUnknown)
-        try property(AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultInputDevice, value: &identifier)
+        try property(
+            AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultInputDevice,
+            value: &identifier)
         guard let device = devices.first(where: { $0.identifier == identifier }) else {
             throw PraatvolError("No default microphone exists. Select an input in System Settings > Sound > Input.")
         }

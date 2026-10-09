@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import PraatvolCore
 
 @Test func jobTransitions() throws {
@@ -51,8 +52,9 @@ import Testing
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer {
-        do { try FileManager.default.removeItem(at: root) }
-        catch { Issue.record("Cannot remove test library: \(error)") }
+        do { try FileManager.default.removeItem(at: root) } catch {
+            Issue.record("Cannot remove test library: \(error)")
+        }
     }
     #expect(try Library.scan(root: root).isEmpty)
     var older = ItemMetadata(date: Date(timeIntervalSince1970: 1), kind: "Room", sources: "mic")
@@ -95,8 +97,9 @@ import Testing
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer {
-        do { try FileManager.default.removeItem(at: root) }
-        catch { Issue.record("Cannot remove test library: \(error)") }
+        do { try FileManager.default.removeItem(at: root) } catch {
+            Issue.record("Cannot remove test library: \(error)")
+        }
     }
     let folder = try Storage.createFolder(root: root, date: Date(), kind: "Room")
     try Data([1]).write(to: folder.appendingPathComponent("upload.m4a"))

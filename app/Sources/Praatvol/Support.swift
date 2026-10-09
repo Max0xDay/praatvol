@@ -27,7 +27,8 @@ final class AppLog {
         lock.lock()
         defer { lock.unlock() }
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             if !FileManager.default.fileExists(atPath: url.path) { try Data().write(to: url) }
             let file = try FileHandle(forWritingTo: url)
             defer { do { try file.close() } catch { NSLog("praatvol: log close failed") } }
@@ -40,8 +41,10 @@ final class AppLog {
 
 enum Keychain {
     private static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AppIdentity.keychainService,
-         kSecAttrAccount as String: "openrouter-api-key"]
+        [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AppIdentity.keychainService,
+            kSecAttrAccount as String: "openrouter-api-key",
+        ]
     }
     static func read() throws -> String {
         var lookup = query
@@ -51,7 +54,8 @@ enum Keychain {
         let status = SecItemCopyMatching(lookup as CFDictionary, &item)
         if status == errSecItemNotFound { return "" }
         guard status == errSecSuccess, let bytes = item as? Data,
-              let key = String(data: bytes, encoding: .utf8) else {
+            let key = String(data: bytes, encoding: .utf8)
+        else {
             throw PraatvolError("Keychain access failed (\(status)). Allow access for \(AppIdentity.name).")
         }
         return key
@@ -76,9 +80,10 @@ struct Preferences {
     let lossless: Bool
     static func read() -> Preferences {
         let defaults = UserDefaults.standard
-        return Preferences(model: defaults.string(forKey: "model") ?? "elevenlabs/scribe-v2",
-                           microphoneIdentifier: defaults.string(forKey: "microphone") ?? "",
-                           lossless: defaults.bool(forKey: "lossless"))
+        return Preferences(
+            model: defaults.string(forKey: "model") ?? "elevenlabs/scribe-v2",
+            microphoneIdentifier: defaults.string(forKey: "microphone") ?? "",
+            lossless: defaults.bool(forKey: "lossless"))
     }
 }
 

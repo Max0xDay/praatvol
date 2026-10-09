@@ -106,6 +106,69 @@ The Python beta uses a separate app helper and Opus uploads.
 See [the legacy guide](experiments/poc/README.md) for setup and commands.
 The native app requires no Python environment.
 
+## Contributing and CI
+
+Continuous integration (CI) checks each pull request into `main`.
+The workflow file is `.github/workflows/ci.yml`.
+
+### Branch flow
+
+1. Create a branch named `task/<name>` from `main`.
+2. Commit your changes to that branch.
+3. Open a pull request from the branch into `main`.
+4. Fix any failed check and push again.
+
+### Checks
+
+The workflow runs three checks.
+Each check name matches a job name:
+
+- `branch-name` fails if the branch name does not start with `task/`.
+- `lint` fails on any Swift format warning in `app/Sources` and `app/Tests`.
+- `build-test` fails on a build error, a test failure, a core line coverage below 70%, or an app build error.
+
+The `branch-name` check checks the name only on pull requests.
+On pushes to `main`, the check reports success without checking the name.
+
+### Run the checks locally
+
+Run these commands from the repository root.
+
+Check the Swift format rules:
+
+```bash
+swift format lint --strict --recursive app/Sources app/Tests
+```
+
+Fix the format warnings:
+
+```bash
+swift format format --in-place --recursive app/Sources app/Tests
+```
+
+Run the tests and the coverage gate:
+
+```bash
+app/scripts/coverage.sh
+```
+
+The script prints the `PraatvolCore` line coverage and fails below 70%.
+
+Build the package:
+
+```bash
+cd app && swift build
+```
+
+Build the dev and release apps:
+
+```bash
+app/scripts/build.sh dev
+app/scripts/build.sh release
+```
+
+The file `app/.swift-format` sets the indentation and line length for all format commands.
+
 ## Repo layout
 
 - `app/` contains the production Swift package, tests, scripts, and app guide.

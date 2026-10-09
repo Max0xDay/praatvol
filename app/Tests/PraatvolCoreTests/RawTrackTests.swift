@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Testing
+
 @testable import PraatvolCore
 
 private func rawTestFolder() throws -> URL {
@@ -10,15 +11,15 @@ private func rawTestFolder() throws -> URL {
 }
 
 private func removeRawTestFolder(_ folder: URL) {
-    do { try FileManager.default.removeItem(at: folder) }
-    catch { Issue.record("Cannot remove test tracks: \(error)") }
+    do { try FileManager.default.removeItem(at: folder) } catch { Issue.record("Cannot remove test tracks: \(error)") }
 }
 
 @Test func rawFlacPreservesChannelsAndSamples() throws {
     let folder = try rawTestFolder()
     defer { removeRawTestFolder(folder) }
     let source = folder.appendingPathComponent("mic.caf")
-    let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 2, interleaved: false))
+    let format = try #require(
+        AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 2, interleaved: false))
     let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 10000))
     buffer.frameLength = 10000
     let channels = try #require(buffer.floatChannelData)
@@ -53,7 +54,8 @@ private func removeRawTestFolder(_ folder: URL) {
     let folder = try rawTestFolder()
     defer { removeRawTestFolder(folder) }
     let source = folder.appendingPathComponent("system.caf")
-    let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false))
+    let format = try #require(
+        AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false))
     let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 10000))
     buffer.frameLength = 10000
     let samples = try #require(buffer.floatChannelData?[0])
@@ -69,7 +71,8 @@ private func removeRawTestFolder(_ folder: URL) {
 
 @Test(arguments: [AVAudioCommonFormat.pcmFormatFloat32, .pcmFormatInt16, .pcmFormatInt32])
 func bufferMeterUsesEveryChannel(format: AVAudioCommonFormat) throws {
-    let audioFormat = try #require(AVAudioFormat(commonFormat: format, sampleRate: 48000, channels: 2, interleaved: false))
+    let audioFormat = try #require(
+        AVAudioFormat(commonFormat: format, sampleRate: 48000, channels: 2, interleaved: false))
     let buffer = try #require(AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: 4))
     buffer.frameLength = 4
     for frame in 0..<4 {
@@ -82,7 +85,7 @@ func bufferMeterUsesEveryChannel(format: AVAudioCommonFormat) throws {
             buffer.int16ChannelData?[1][frame] = 16384
         case .pcmFormatInt32:
             buffer.int32ChannelData?[0][frame] = 0
-            buffer.int32ChannelData?[1][frame] = 1073741824
+            buffer.int32ChannelData?[1][frame] = 1_073_741_824
         default: Issue.record("Unsupported test format")
         }
     }

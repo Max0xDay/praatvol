@@ -1,9 +1,14 @@
 import Foundation
 
 public enum JobStep: String, CaseIterable, Sendable {
-    case idle = "Idle", starting = "Starting", recording = "Recording"
-    case preparing = "Preparing audio", uploading = "Uploading", transcribing = "Transcribing"
-    case saved = "Saved", failed = "Failed"
+    case idle = "Idle"
+    case starting = "Starting"
+    case recording = "Recording"
+    case preparing = "Preparing audio"
+    case uploading = "Uploading"
+    case transcribing = "Transcribing"
+    case saved = "Saved"
+    case failed = "Failed"
 }
 
 public struct JobState: Sendable {
@@ -14,7 +19,7 @@ public struct JobState: Sendable {
             .idle: [.starting, .preparing], .starting: [.recording, .failed, .idle],
             .recording: [.preparing, .failed], .preparing: [.uploading, .failed, .idle],
             .uploading: [.transcribing, .failed], .transcribing: [.saved, .failed],
-            .saved: [.starting, .preparing, .idle], .failed: [.starting, .preparing, .idle]
+            .saved: [.starting, .preparing, .idle], .failed: [.starting, .preparing, .idle],
         ]
         guard allowed[step]?.contains(next) == true else {
             throw PraatvolError("Invalid job transition: \(step.rawValue) → \(next.rawValue).")

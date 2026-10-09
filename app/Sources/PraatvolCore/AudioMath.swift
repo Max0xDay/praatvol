@@ -6,7 +6,9 @@ public enum AudioMath {
 
     public static func mono(_ channels: [[Float]]) throws -> [Float] {
         guard let first = channels.first else { return [] }
-        guard channels.allSatisfy({ $0.count == first.count }) else { throw PraatvolError("Audio channels have different lengths.") }
+        guard channels.allSatisfy({ $0.count == first.count }) else {
+            throw PraatvolError("Audio channels have different lengths.")
+        }
         var samples = [Float](repeating: 0, count: first.count)
         for channel in channels {
             for index in samples.indices { samples[index] += channel[index] / Float(channels.count) }
@@ -15,7 +17,9 @@ public enum AudioMath {
     }
 
     public static func resample(_ samples: [Float], sourceRateHz: Double) throws -> [Float] {
-        guard sourceRateHz.isFinite, sourceRateHz > 0 else { throw PraatvolError("Audio sample rate must be positive.") }
+        guard sourceRateHz.isFinite, sourceRateHz > 0 else {
+            throw PraatvolError("Audio sample rate must be positive.")
+        }
         guard !samples.isEmpty else { return [] }
         if sourceRateHz == sampleRateHz { return samples }
         let filtered = sourceRateHz > sampleRateHz ? boxFilter(samples, sourceRateHz: sourceRateHz) : samples
@@ -54,7 +58,8 @@ public enum AudioMath {
 
     public static func mix(microphone: [Float], system: [Float], offsetSeconds: Double) throws -> [Float] {
         let offsets = try alignment(offsetSeconds: offsetSeconds)
-        var mixed = [Float](repeating: 0, count: max(microphone.count + offsets.microphone, system.count + offsets.system))
+        var mixed = [Float](
+            repeating: 0, count: max(microphone.count + offsets.microphone, system.count + offsets.system))
         for index in microphone.indices { mixed[index + offsets.microphone] += microphone[index] }
         for index in system.indices { mixed[index + offsets.system] += system[index] }
         guard mixed.allSatisfy(\.isFinite) else { throw PraatvolError("Captured audio contains invalid samples.") }

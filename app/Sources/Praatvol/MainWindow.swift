@@ -39,8 +39,7 @@ final class JobViewModel: ObservableObject {
     }
     func advance(_ step: JobStep) {
         guard state.step != step else { return }
-        do { try state.advance(to: step) }
-        catch {
+        do { try state.advance(to: step) } catch {
             AppLog.shared.event("job-transition-failed")
             message = error.localizedDescription
         }
@@ -68,8 +67,9 @@ final class JobViewModel: ObservableObject {
 final class MainWindow {
     private let window: NSWindow
     init(model: JobViewModel) {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = AppIdentity.name
         window.minSize = NSSize(width: 720, height: 600)
         window.isReleasedWhenClosed = false
@@ -80,7 +80,9 @@ final class MainWindow {
         if activate {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-        } else { window.orderFront(nil) }
+        } else {
+            window.orderFront(nil)
+        }
     }
 }
 
@@ -96,7 +98,8 @@ private struct Dashboard: View {
                         Text("Audio, voices, and transcripts").foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(model.busy ? "ACTIVE" : "READY").font(.caption.bold()).padding(8).background(.thinMaterial, in: Capsule())
+                    Text(model.busy ? "ACTIVE" : "READY").font(.caption.bold()).padding(8).background(
+                        .thinMaterial, in: Capsule())
                 }
                 nowPanel
                 libraryPanel
@@ -108,24 +111,30 @@ private struct Dashboard: View {
             Label("Now", systemImage: "waveform.circle.fill").font(.title2.bold())
             Text(model.title).font(.headline)
             HStack(spacing: 8) {
-                ForEach([JobStep.starting, .recording, .preparing, .uploading, .transcribing, .saved], id: \.self) { step in
+                ForEach([JobStep.starting, .recording, .preparing, .uploading, .transcribing, .saved], id: \.self) {
+                    step in
                     Text(step.rawValue).font(.caption).padding(7)
-                        .background(model.state.step == step ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: Capsule())
+                        .background(
+                            model.state.step == step ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08),
+                            in: Capsule())
                 }
             }.accessibilityLabel("Current step: \(model.state.step.rawValue)")
             currentProgress
             if !model.message.isEmpty {
-                Text(model.message).foregroundStyle(model.state.step == .failed ? Color.red : Color.secondary).textSelection(.enabled)
+                Text(model.message).foregroundStyle(model.state.step == .failed ? Color.red : Color.secondary)
+                    .textSelection(.enabled)
             }
             currentActions
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(
+            .regularMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
     @ViewBuilder private var currentProgress: some View {
         switch model.state.step {
         case .starting:
             ProgressView("Request permissions and start capture…")
         case .recording:
-            Text(Transcript.timestamp(model.elapsedSeconds)).font(.system(size: 52, weight: .medium, design: .monospaced))
+            Text(Transcript.timestamp(model.elapsedSeconds)).font(
+                .system(size: 52, weight: .medium, design: .monospaced))
             meter("Microphone", level: model.microphoneLevel, silence: model.microphoneSilenceSeconds)
             if model.isCall { meter("System audio", level: model.systemLevel, silence: model.systemSilenceSeconds) }
             Text(String(format: "%.2f MB on disk", Double(model.diskBytes) / 1_000_000)).foregroundStyle(.secondary)
@@ -135,12 +144,18 @@ private struct Dashboard: View {
             Text("Current operation: \(Int(model.fraction * 100))%").font(.caption.monospacedDigit())
         case .uploading:
             ProgressView(value: model.fraction)
-            Text(String(format: "%.2f / %.2f MB · %.0f%%", Double(model.sentBytes) / 1_000_000,
-                        Double(model.totalBytes) / 1_000_000, model.fraction * 100)).monospacedDigit()
+            Text(
+                String(
+                    format: "%.2f / %.2f MB · %.0f%%", Double(model.sentBytes) / 1_000_000,
+                    Double(model.totalBytes) / 1_000_000, model.fraction * 100)
+            ).monospacedDigit()
         case .transcribing:
             ProgressView("The provider transcribes the audio…")
-            Text(String(format: "%.0f s elapsed · about %.0f s total", model.elapsedSeconds,
-                        JobProgress.estimateSeconds(durationSeconds: model.durationSeconds))).monospacedDigit()
+            Text(
+                String(
+                    format: "%.0f s elapsed · about %.0f s total", model.elapsedSeconds,
+                    JobProgress.estimateSeconds(durationSeconds: model.durationSeconds))
+            ).monospacedDigit()
             Text("The estimate uses earlier trials. Actual time varies.").font(.caption).foregroundStyle(.secondary)
         case .saved:
             if let summary = model.summary { summaryView(summary) }
@@ -158,26 +173,34 @@ private struct Dashboard: View {
                 Text(String(format: "RMS %.3f · peak %.3f · %.1f dBFS", level.rms, level.peak, level.decibelsFullScale))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
-            ProgressView(value: min(1, max(0, (level.decibelsFullScale + 60) / 60))).tint(level.hasSignal ? .green : .orange)
+            ProgressView(value: min(1, max(0, (level.decibelsFullScale + 60) / 60))).tint(
+                level.hasSignal ? .green : .orange)
             if silence >= 3 { Text("No signal for \(Int(silence)) s").font(.caption).foregroundStyle(.orange) }
         }
     }
     private func summaryView(_ metadata: ItemMetadata) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Transcript saved", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            Text("\(Transcript.duration(metadata.durationSeconds)) · \(metadata.speakerCount) speakers · \(metadata.wordCount) words")
+            Text(
+                "\(Transcript.duration(metadata.durationSeconds)) · \(metadata.speakerCount) speakers · \(metadata.wordCount) words"
+            )
             Text("\(cost(metadata.costUsd)) · \(metadata.model ?? "Model not reported")").foregroundStyle(.secondary)
         }
     }
     @ViewBuilder private var currentActions: some View {
         if model.canStop {
-            Button(model.state.step == .starting ? "Cancel setup" : "Stop recording", action: model.stop).buttonStyle(.borderedProminent)
+            Button(model.state.step == .starting ? "Cancel setup" : "Stop recording", action: model.stop).buttonStyle(
+                .borderedProminent)
         }
         if let folder = model.folder {
             HStack {
-                if model.state.step == .saved { Button("Open transcript") { model.open(folder.appendingPathComponent("transcript.md")) } }
+                if model.state.step == .saved {
+                    Button("Open transcript") { model.open(folder.appendingPathComponent("transcript.md")) }
+                }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
-                if model.state.step == .failed, let item = model.library.first(where: { $0.folder == folder }), item.canRetry {
+                if model.state.step == .failed, let item = model.library.first(where: { $0.folder == folder }),
+                    item.canRetry
+                {
                     Button("Retry…") { model.retry(item) }
                 }
             }
@@ -198,13 +221,16 @@ private struct Dashboard: View {
                     .font(.title2).foregroundStyle(.tint)
                 VStack(alignment: .leading) {
                     Text(item.metadata.kind).font(.headline)
-                    Text(item.metadata.date, format: .dateTime.year().month().day().hour().minute().second()).foregroundStyle(.secondary)
+                    Text(item.metadata.date, format: .dateTime.year().month().day().hour().minute().second())
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(item.status.rawValue).font(.caption.bold()).padding(7).background(.thinMaterial, in: Capsule())
             }
-            Text("\(Transcript.duration(item.metadata.durationSeconds)) · \(item.metadata.speakerCount) speakers · \(cost(item.metadata.costUsd))")
-                .font(.callout).foregroundStyle(.secondary)
+            Text(
+                "\(Transcript.duration(item.metadata.durationSeconds)) · \(item.metadata.speakerCount) speakers · \(cost(item.metadata.costUsd))"
+            )
+            .font(.callout).foregroundStyle(.secondary)
             if let message = item.metadata.errorMessage { Text(message).font(.caption).foregroundStyle(.red) }
             HStack {
                 Button("Open transcript") { model.open(item.transcript) }.disabled(item.status != .transcribed)

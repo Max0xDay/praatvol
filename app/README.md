@@ -467,7 +467,7 @@ swift build -Xswiftc -warnings-as-errors
 The suite uses Swift Testing and synthetic audio without network requests.
 The suite covers state transitions, progress, estimates, meters, library metadata, retry rules, request bodies, codecs, and raw verification.
 The current suite has 19 tests with 36 cases, including parameter sets.
-Core line coverage is 93.41%, which exceeds the 70% target.
+The `app/scripts/coverage.sh` script reports the core line coverage and fails below 70%.
 The job and meter tests preceded the corresponding core code.
 The raw compression tests followed the encoder implementation.
 Capture, permissions, notifications, and login access require a real desktop session.

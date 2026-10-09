@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import PraatvolCore
 
 @Test(arguments: [(59, 64_000), (60, 64_000), (61, 48_000), (90, 48_000), (91, 32_000)])
@@ -37,13 +38,19 @@ func errorInSuccess(body: String) {
 }
 
 @Test func responseAndMarkdown() throws {
-    let response = Data("""
-    {"words":[{"start":1,"speaker":0,"word":"Hello"},{"start":2,"speaker":0,"word":"there."},{"start":65,"speaker":1,"word":"Yes."}],"segments":[{"start":0,"text":"wrong"}],"usage":{"seconds":90,"cost":0.000219}}
-    """.utf8)
+    let response = Data(
+        """
+        {"words":[{"start":1,"speaker":0,"word":"Hello"},{"start":2,"speaker":0,"word":"there."},{"start":65,"speaker":1,"word":"Yes."}],"segments":[{"start":0,"text":"wrong"}],"usage":{"seconds":90,"cost":0.000219}}
+        """.utf8)
     let transcript = try Transcript.parse(response, statusCode: 200)
-    #expect(transcript.turns == [Turn(start: 1, speaker: "0", text: "Hello there."), Turn(start: 65, speaker: "1", text: "Yes.")])
-    let markdown = transcript.markdown(date: Date(timeIntervalSince1970: 0), durationSeconds: 90,
-                                       model: "elevenlabs/scribe-v2", sources: "mic: test", archiveName: "audio.flac", uploadDescription: "AAC 64 kbps")
+    #expect(
+        transcript.turns == [
+            Turn(start: 1, speaker: "0", text: "Hello there."), Turn(start: 65, speaker: "1", text: "Yes."),
+        ])
+    let markdown = transcript.markdown(
+        date: Date(timeIntervalSince1970: 0), durationSeconds: 90,
+        model: "elevenlabs/scribe-v2", sources: "mic: test", archiveName: "audio.flac", uploadDescription: "AAC 64 kbps"
+    )
     #expect(markdown.contains("[00:01] Speaker A: Hello there.\n"))
     #expect(markdown.contains("[01:05] Speaker B: Yes.\n"))
     #expect(markdown.contains("- Speakers: 2\n"))
@@ -54,10 +61,16 @@ func errorInSuccess(body: String) {
 }
 
 @Test func missingLabelsAndFallbacks() throws {
-    let segments = try Transcript.parse(Data("{\"segments\":[{\"start\":4,\"text\":\"Hello.\"},{\"start\":8,\"text\":\"Again.\"}]}".utf8), statusCode: 200)
+    let segments = try Transcript.parse(
+        Data("{\"segments\":[{\"start\":4,\"text\":\"Hello.\"},{\"start\":8,\"text\":\"Again.\"}]}".utf8),
+        statusCode: 200)
     #expect(!segments.hasSpeakerLabels)
     #expect(segments.turns.count == 2)
-    #expect(segments.markdown(date: Date(), durationSeconds: 10, model: "test", sources: "file", archiveName: "audio.flac", uploadDescription: "FLAC").contains("Speaker labels: absent"))
+    #expect(
+        segments.markdown(
+            date: Date(), durationSeconds: 10, model: "test", sources: "file", archiveName: "audio.flac",
+            uploadDescription: "FLAC"
+        ).contains("Speaker labels: absent"))
     let fallback = try Transcript.parse(Data("{\"text\":\"Hello\"}".utf8), statusCode: 200)
     #expect(fallback.turns == [Turn(start: 0, speaker: nil, text: "Hello")])
     #expect(throws: PraatvolError.self) { try Transcript.parse(Data("{}".utf8), statusCode: 401) }
@@ -68,7 +81,9 @@ func errorInSuccess(body: String) {
     let date = Date(timeIntervalSince1970: 0)
     let timezone = TimeZone(secondsFromGMT: 0)!
     #expect(Storage.relativeFolder(date: date, kind: "Call", timezone: timezone) == "1970/01/01/00-00-00 Call")
-    #expect(Storage.relativeFolder(date: date, kind: "File: memo/name.m4a", timezone: timezone) == "1970/01/01/00-00-00 File: memo-name.m4a")
+    #expect(
+        Storage.relativeFolder(date: date, kind: "File: memo/name.m4a", timezone: timezone)
+            == "1970/01/01/00-00-00 File: memo-name.m4a")
     #expect(Storage.root(isDevelopment: true).lastPathComponent == "praatvol-dev")
     #expect(Storage.root(isDevelopment: false).lastPathComponent == "praatvol")
 }
@@ -79,12 +94,15 @@ func resampling(rate: Double) throws {
     let converted = try AudioMath.resample(samples, sourceRateHz: rate)
     #expect(converted.count == 16000)
     #expect(converted.map { abs($0) }.max()! > 0.1)
-    let toneCorrelation = converted.enumerated().reduce(0.0) { sum, sample in
-        sum + Double(sample.element) * sin(2 * .pi * 1000 * Double(sample.offset) / 16000)
-    } / Double(converted.count)
+    let toneCorrelation =
+        converted.enumerated().reduce(0.0) { sum, sample in
+            sum + Double(sample.element) * sin(2 * .pi * 1000 * Double(sample.offset) / 16000)
+        } / Double(converted.count)
     #expect(toneCorrelation > 0.07)
     #expect(try AudioMath.resample([], sourceRateHz: rate).isEmpty)
-    #expect(try AudioMath.resample(Array(repeating: 1, count: 7), sourceRateHz: rate).count == Int((7 * 16000 / rate).rounded()))
+    #expect(
+        try AudioMath.resample(Array(repeating: 1, count: 7), sourceRateHz: rate).count
+            == Int((7 * 16000 / rate).rounded()))
 }
 
 @Test func mixingAlignmentAndPeak() throws {

@@ -16,8 +16,9 @@ final class TrackWriter {
 
     init(url: URL, format: AVAudioFormat) throws {
         self.format = format
-        file = try AVAudioFile(forWriting: url, settings: format.settings,
-                              commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+        file = try AVAudioFile(
+            forWriting: url, settings: format.settings,
+            commonFormat: format.commonFormat, interleaved: format.isInterleaved)
     }
 
     func write(_ buffer: AVAudioPCMBuffer, startSeconds: Double) {
@@ -76,10 +77,16 @@ final class SystemAudioRecorder {
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: description.uuid.uuidString,
-                                            kAudioSubTapDriftCompensationKey: true]]
+            kAudioAggregateDeviceTapListKey: [
+                [
+                    kAudioSubTapUIDKey: description.uuid.uuidString,
+                    kAudioSubTapDriftCompensationKey: true,
+                ]
+            ],
         ]
-        try checkStatus(AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &deviceIdentifier), "Create private audio device")
+        try checkStatus(
+            AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &deviceIdentifier),
+            "Create private audio device")
         var stream = AudioStreamBasicDescription()
         try AudioDevices.property(tapIdentifier, selector: kAudioTapPropertyFormat, value: &stream)
         guard let format = AVAudioFormat(streamDescription: &stream) else {
@@ -87,25 +94,28 @@ final class SystemAudioRecorder {
         }
         let writer = try TrackWriter(url: url, format: format)
         self.writer = writer
-        try checkStatus(AudioDeviceCreateIOProcIDWithBlock(&inputOutputProcedure, deviceIdentifier, writingQueue) {
-            _, inputBuffers, inputTime, _, _ in
-            guard inputBuffers.pointee.mNumberBuffers > 0,
-                  inputBuffers.pointee.mBuffers.mDataByteSize > 0 else { return }
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputBuffers, deallocator: nil) else {
-                AppLog.shared.event("invalid-system-buffer")
-                return
-            }
-            let timestamp = inputTime.pointee
-            let startSeconds: Double
-            if timestamp.mFlags.contains(.hostTimeValid) {
-                startSeconds = AVAudioTime.seconds(forHostTime: timestamp.mHostTime)
-            } else {
-                // #COMPLETION_DRIVE: A callback without host time arrives at the buffer's end, as in tap.swift.
-                // #SUGGEST_VERIFY: Measure latency and alignment with a headset during the manual call test.
-                startSeconds = ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / format.sampleRate
-            }
-            writer.write(buffer, startSeconds: startSeconds)
-        }, "Create tap callback")
+        try checkStatus(
+            AudioDeviceCreateIOProcIDWithBlock(&inputOutputProcedure, deviceIdentifier, writingQueue) {
+                _, inputBuffers, inputTime, _, _ in
+                guard inputBuffers.pointee.mNumberBuffers > 0,
+                    inputBuffers.pointee.mBuffers.mDataByteSize > 0
+                else { return }
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputBuffers, deallocator: nil)
+                else {
+                    AppLog.shared.event("invalid-system-buffer")
+                    return
+                }
+                let timestamp = inputTime.pointee
+                let startSeconds: Double
+                if timestamp.mFlags.contains(.hostTimeValid) {
+                    startSeconds = AVAudioTime.seconds(forHostTime: timestamp.mHostTime)
+                } else {
+                    // #COMPLETION_DRIVE: A callback without host time arrives at the buffer's end, as in tap.swift.
+                    // #SUGGEST_VERIFY: Measure latency and alignment with a headset during the manual call test.
+                    startSeconds = ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / format.sampleRate
+                }
+                writer.write(buffer, startSeconds: startSeconds)
+            }, "Create tap callback")
         try checkStatus(AudioDeviceStart(deviceIdentifier, inputOutputProcedure), "Start system audio")
         started = true
     }
@@ -172,7 +182,9 @@ final class Recorder {
     private func checkCancellation() throws {
         cancellationLock.lock()
         defer { cancellationLock.unlock() }
-        guard !cancelled else { throw PraatvolError("Capture setup was cancelled. Check capture permissions before another attempt.") }
+        guard !cancelled else {
+            throw PraatvolError("Capture setup was cancelled. Check capture permissions before another attempt.")
+        }
     }
 
     func meters() -> (microphone: (AudioLevel, Double), system: (AudioLevel, Double)?) {
@@ -187,16 +199,22 @@ final class Recorder {
         isCall = call
         let folder = try Storage.createFolder(root: AppIdentity.root, date: date, kind: call ? "Call" : "Room")
         self.folder = folder
-        try Library.save(ItemMetadata(date: date, kind: call ? "Call" : "Room", sources: "Capture setup"), folder: folder)
+        try Library.save(
+            ItemMetadata(date: date, kind: call ? "Call" : "Room", sources: "Capture setup"), folder: folder)
         do {
             try checkCancellation()
             let device = try AudioDevices.selected(preferences.microphoneIdentifier)
             microphoneName = device.name
             let input = engine.inputNode
-            guard let audioUnit = input.audioUnit else { throw PraatvolError("The microphone audio unit is unavailable.") }
+            guard let audioUnit = input.audioUnit else {
+                throw PraatvolError("The microphone audio unit is unavailable.")
+            }
             var identifier = device.identifier
-            try checkStatus(AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global, 0, &identifier, UInt32(MemoryLayout<AudioDeviceID>.size)), "Select microphone")
+            try checkStatus(
+                AudioUnitSetProperty(
+                    audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global, 0, &identifier, UInt32(MemoryLayout<AudioDeviceID>.size)),
+                "Select microphone")
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { throw PraatvolError(Self.microphoneHelp) }
             let writer = try TrackWriter(url: folder.appendingPathComponent("mic.caf"), format: format)
@@ -206,8 +224,10 @@ final class Recorder {
             input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
                 // #COMPLETION_DRIVE: Without host time, the microphone callback arrives at the buffer's end.
                 // #SUGGEST_VERIFY: Compare alignment with a known simultaneous sound in both tracks.
-                let start = time.isHostTimeValid ? AVAudioTime.seconds(forHostTime: time.hostTime) :
-                    ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / buffer.format.sampleRate
+                let start =
+                    time.isHostTimeValid
+                    ? AVAudioTime.seconds(forHostTime: time.hostTime)
+                    : ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / buffer.format.sampleRate
                 writer.write(buffer, startSeconds: start)
             }
             installedTap = true
@@ -229,8 +249,10 @@ final class Recorder {
         }
     }
 
-    static let microphoneHelp = "No microphone audio arrived. Allow access in System Settings > Privacy & Security > Microphone. Check Sound > Input, then relaunch the app. The raw audio stays saved."
-    static let systemHelp = "The system track is silent or empty. Start playback and allow access in System Settings > Privacy & Security > Screen & System Audio Recording (or System Audio Recording), then relaunch the app. The microphone track stays saved."
+    static let microphoneHelp =
+        "No microphone audio arrived. Allow access in System Settings > Privacy & Security > Microphone. Check Sound > Input, then relaunch the app. The raw audio stays saved."
+    static let systemHelp =
+        "The system track is silent or empty. Start playback and allow access in System Settings > Privacy & Security > Screen & System Audio Recording (or System Audio Recording), then relaunch the app. The microphone track stays saved."
 
     func microphoneProblem() -> Bool {
         guard let snapshot = microphoneWriter?.snapshot() else { return true }
@@ -241,19 +263,26 @@ final class Recorder {
 
     func stop() -> CapturedItem? {
         engine.stop()
-        if installedTap { engine.inputNode.removeTap(onBus: 0); installedTap = false }
+        if installedTap {
+            engine.inputNode.removeTap(onBus: 0)
+            installedTap = false
+        }
         microphoneWriter?.close()
         var warnings = systemRecorder.stop()
         guard let folder, let microphoneWriter else { return nil }
         let microphone = microphoneWriter.snapshot()
         let system = systemRecorder.writer?.snapshot()
-        if microphone.error != nil { warnings.append("The microphone file write failed. The partial audio stays saved.") }
+        if microphone.error != nil {
+            warnings.append("The microphone file write failed. The partial audio stays saved.")
+        }
         if system?.error != nil { warnings.append("The system file write failed. The partial audio stays saved.") }
         if let microphoneLast = microphone.last, let systemLast = system?.last {
             // #COMPLETION_DRIVE: A five-second callback gap suggests idle playback or an output change.
             // #SUGGEST_VERIFY: Inspect both raw tracks before another call after a device change.
             if microphoneLast - systemLast > 5 {
-                warnings.append("System audio ended early. Playback may be idle, or the output device changed. The raw tracks stay saved.")
+                warnings.append(
+                    "System audio ended early. Playback may be idle, or the output device changed. The raw tracks stay saved."
+                )
             }
         }
         let offset: Double
@@ -264,9 +293,11 @@ final class Recorder {
             // #SUGGEST_VERIFY: The pipeline reports silent tracks before upload.
             offset = 0
         }
-        var sources = "mic: \(microphoneName) (\(microphoneWriter.format.sampleRate) Hz, \(microphoneWriter.format.channelCount) channels)"
+        var sources =
+            "mic: \(microphoneName) (\(microphoneWriter.format.sampleRate) Hz, \(microphoneWriter.format.channelCount) channels)"
         if let writer = systemRecorder.writer {
-            sources += "; system: global playback (\(writer.format.sampleRate) Hz, \(writer.format.channelCount) channels)"
+            sources +=
+                "; system: global playback (\(writer.format.sampleRate) Hz, \(writer.format.channelCount) channels)"
         }
         do {
             var metadata = try Library.load(folder: folder)
@@ -277,8 +308,9 @@ final class Recorder {
             AppLog.shared.event("capture-metadata-failed", code: (error as NSError).code)
             warnings.append("The app could not save capture metadata. Inspect the raw tracks before retry.")
         }
-        return CapturedItem(folder: folder, date: date, microphone: folder.appendingPathComponent("mic.caf"),
-                            system: isCall ? folder.appendingPathComponent("system.caf") : nil,
-                            offsetSeconds: offset, sources: sources, warnings: warnings)
+        return CapturedItem(
+            folder: folder, date: date, microphone: folder.appendingPathComponent("mic.caf"),
+            system: isCall ? folder.appendingPathComponent("system.caf") : nil,
+            offsetSeconds: offset, sources: sources, warnings: warnings)
     }
 }

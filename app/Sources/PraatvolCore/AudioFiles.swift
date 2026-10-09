@@ -5,7 +5,8 @@ public struct Archive {
     public let url: URL
     public let explanation: String
     public init(url: URL, explanation: String) {
-        self.url = url; self.explanation = explanation
+        self.url = url
+        self.explanation = explanation
     }
 }
 
@@ -15,29 +16,41 @@ public enum AudioFiles {
         return Double(file.length) / file.processingFormat.sampleRate
     }
 
-    public static func convert(source: URL, destination: URL, rateHz: Double = 16000,
-                               settings: [String: Any]? = nil, progress: (Double) -> Void = { _ in }) throws {
+    public static func convert(
+        source: URL, destination: URL, rateHz: Double = 16000,
+        settings: [String: Any]? = nil, progress: (Double) -> Void = { _ in }
+    ) throws {
         let input = try AVAudioFile(forReading: source, commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let inputMono = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                            sampleRate: input.processingFormat.sampleRate, channels: 1, interleaved: false),
-              let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rateHz, channels: 1, interleaved: false),
-              let converter = AVAudioConverter(from: inputMono, to: format),
-              let outputBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
+        guard
+            let inputMono = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: input.processingFormat.sampleRate, channels: 1, interleaved: false),
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32, sampleRate: rateHz, channels: 1, interleaved: false),
+            let converter = AVAudioConverter(from: inputMono, to: format),
+            let outputBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192)
+        else {
             throw PraatvolError("The audio format cannot convert to mono audio.")
         }
-        let output = try AVAudioFile(forWriting: destination, settings: settings ?? format.settings,
-                                     commonFormat: .pcmFormatFloat32, interleaved: false)
+        let output = try AVAudioFile(
+            forWriting: destination, settings: settings ?? format.settings,
+            commonFormat: .pcmFormatFloat32, interleaved: false)
         try convertBuffers(input: input, output: output, converter: converter, buffer: outputBuffer, progress: progress)
     }
 
-    private static func convertBuffers(input: AVAudioFile, output: AVAudioFile,
-                                       converter: AVAudioConverter, buffer: AVAudioPCMBuffer, progress: (Double) -> Void) throws {
+    private static func convertBuffers(
+        input: AVAudioFile, output: AVAudioFile,
+        converter: AVAudioConverter, buffer: AVAudioPCMBuffer, progress: (Double) -> Void
+    ) throws {
         var readError: Error?
         var finished = false
         while !finished {
             var conversionError: NSError?
             let status = converter.convert(to: buffer, error: &conversionError) { frames, inputStatus in
-                if input.framePosition >= input.length { inputStatus.pointee = .endOfStream; return nil }
+                if input.framePosition >= input.length {
+                    inputStatus.pointee = .endOfStream
+                    return nil
+                }
                 do {
                     let monoBuffer = try readMono(input, frames: max(frames, 1), format: converter.inputFormat)
                     inputStatus.pointee = .haveData
@@ -58,10 +71,12 @@ public enum AudioFiles {
         }
     }
 
-    private static func readMono(_ input: AVAudioFile, frames: UInt32, format: AVAudioFormat) throws -> AVAudioPCMBuffer {
+    private static func readMono(_ input: AVAudioFile, frames: UInt32, format: AVAudioFormat) throws -> AVAudioPCMBuffer
+    {
         guard let native = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: frames),
-              let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-              let channels = native.floatChannelData, let samples = mono.floatChannelData?[0] else {
+            let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+            let channels = native.floatChannelData, let samples = mono.floatChannelData?[0]
+        else {
             throw PraatvolError("Cannot allocate a mono audio buffer.")
         }
         try input.read(into: native, frameCount: frames)
@@ -77,8 +92,10 @@ public enum AudioFiles {
 
     public static func archive(source: URL, folder: URL, progress: (Double) -> Void = { _ in }) throws -> Archive {
         let destination = folder.appendingPathComponent("audio.flac")
-        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatFLAC, AVSampleRateKey: 16000,
-                                      AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16]
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatFLAC, AVSampleRateKey: 16000,
+            AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+        ]
         do {
             try convert(source: source, destination: destination, settings: settings, progress: progress)
             return Archive(url: destination, explanation: "FLAC lossless archive")
@@ -90,30 +107,39 @@ public enum AudioFiles {
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
-            try convert(source: source, destination: fallback, settings: [AVFormatIDKey: kAudioFormatLinearPCM,
-                        AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
-                        AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false], progress: progress)
+            try convert(
+                source: source, destination: fallback,
+                settings: [
+                    AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+                ], progress: progress)
             return Archive(url: fallback, explanation: explanation)
         }
     }
 
-    public static func upload(source: URL, folder: URL, durationSeconds: Double,
-                              progress: (Double) -> Void = { _ in }) throws -> URL {
+    public static func upload(
+        source: URL, folder: URL, durationSeconds: Double,
+        progress: (Double) -> Void = { _ in }
+    ) throws -> URL {
         let destination = folder.appendingPathComponent("upload.m4a")
         // #COMPLETION_DRIVE: AAC at 22.05 kHz accepts the requested mono bitrate range.
         // #SUGGEST_VERIFY: Offline encoder tests cover each bitrate; assess speech quality manually.
-        try convert(source: source, destination: destination, rateHz: 22050, settings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 22050, AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: UploadRules.bitrate(durationSeconds: durationSeconds),
-            AVEncoderBitRateStrategyKey: AVAudioBitRateStrategy_Constant
-        ], progress: progress)
+        try convert(
+            source: source, destination: destination, rateHz: 22050,
+            settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 22050, AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: UploadRules.bitrate(durationSeconds: durationSeconds),
+                AVEncoderBitRateStrategyKey: AVAudioBitRateStrategy_Constant,
+            ], progress: progress)
         return destination
     }
 
     public static func peak(_ url: URL) throws -> Float {
         let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 8192),
-              let channels = buffer.floatChannelData else { throw PraatvolError("Cannot inspect captured audio.") }
+            let channels = buffer.floatChannelData
+        else { throw PraatvolError("Cannot inspect captured audio.") }
         var peak: Float = 0
         while file.framePosition < file.length {
             try file.read(into: buffer)
@@ -129,26 +155,33 @@ public enum AudioFiles {
         return peak
     }
 
-    public static func mix(microphone: URL, system: URL, offsetSeconds: Double, destination: URL,
-                           progress: (Double) -> Void = { _ in }) throws {
+    public static func mix(
+        microphone: URL, system: URL, offsetSeconds: Double, destination: URL,
+        progress: (Double) -> Void = { _ in }
+    ) throws {
         let microphoneFile = try AVAudioFile(forReading: microphone)
         let systemFile = try AVAudioFile(forReading: system)
         let offsets = try AudioMath.alignment(offsetSeconds: offsetSeconds)
         let length = max(microphoneFile.length + Int64(offsets.microphone), systemFile.length + Int64(offsets.system))
         let format = microphoneFile.processingFormat
         guard format.channelCount == 1, format.sampleRate == 16000,
-              systemFile.processingFormat == format,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
+            systemFile.processingFormat == format,
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192)
+        else {
             throw PraatvolError("The mixer requires converted mono tracks at 16 kHz.")
         }
         let output = try AVAudioFile(forWriting: destination, settings: format.settings)
         var position: Int64 = 0
         while position < length {
             let frames = Int(min(8192, length - position))
-            let microphoneSamples = try alignedSamples(microphoneFile, position: position, frames: frames, offset: offsets.microphone)
-            let systemSamples = try alignedSamples(systemFile, position: position, frames: frames, offset: offsets.system)
+            let microphoneSamples = try alignedSamples(
+                microphoneFile, position: position, frames: frames, offset: offsets.microphone)
+            let systemSamples = try alignedSamples(
+                systemFile, position: position, frames: frames, offset: offsets.system)
             buffer.frameLength = UInt32(frames)
-            guard let samples = buffer.floatChannelData?[0] else { throw PraatvolError("Cannot write the mixed buffer.") }
+            guard let samples = buffer.floatChannelData?[0] else {
+                throw PraatvolError("Cannot write the mixed buffer.")
+            }
             for index in 0..<frames { samples[index] = microphoneSamples[index] + systemSamples[index] }
             try output.write(from: buffer)
             position += Int64(frames)
@@ -156,7 +189,8 @@ public enum AudioFiles {
         }
     }
 
-    private static func alignedSamples(_ file: AVAudioFile, position: Int64, frames: Int, offset: Int) throws -> [Float] {
+    private static func alignedSamples(_ file: AVAudioFile, position: Int64, frames: Int, offset: Int) throws -> [Float]
+    {
         var samples = [Float](repeating: 0, count: frames)
         let sourceStart = max(0, position - Int64(offset))
         let targetStart = Int(max(0, Int64(offset) - position))

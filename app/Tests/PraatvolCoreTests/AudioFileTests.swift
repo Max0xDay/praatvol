@@ -2,10 +2,12 @@ import AVFoundation
 import AudioToolbox
 import Foundation
 import Testing
+
 @testable import PraatvolCore
 
 private func writeTone(_ url: URL, rateHz: Double = 48000, channels: UInt32 = 2) throws {
-    let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rateHz, channels: channels, interleaved: false))
+    let format = try #require(
+        AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rateHz, channels: channels, interleaved: false))
     let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(rateHz * 3)))
     buffer.frameLength = buffer.frameCapacity
     let samples = try #require(buffer.floatChannelData)
@@ -34,8 +36,9 @@ private func measuredBitrate(_ url: URL) throws -> UInt32 {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer {
-        do { try FileManager.default.removeItem(at: folder) }
-        catch { Issue.record("Cannot remove test audio: \(error)") }
+        do { try FileManager.default.removeItem(at: folder) } catch {
+            Issue.record("Cannot remove test audio: \(error)")
+        }
     }
     let source = folder.appendingPathComponent("source.caf")
     try writeTone(source)
@@ -83,12 +86,15 @@ func nativeChannelAverage(rateHz: Double, channels: Int) throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer {
-        do { try FileManager.default.removeItem(at: folder) }
-        catch { Issue.record("Cannot remove test audio: \(error)") }
+        do { try FileManager.default.removeItem(at: folder) } catch {
+            Issue.record("Cannot remove test audio: \(error)")
+        }
     }
     let source = folder.appendingPathComponent("native.caf")
-    let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(channels)))
-    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rateHz, interleaved: false, channelLayout: layout)
+    let layout = try #require(
+        AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(channels)))
+    let format = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: rateHz, interleaved: false, channelLayout: layout)
     let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(rateHz)))
     buffer.frameLength = buffer.frameCapacity
     let samples = try #require(buffer.floatChannelData)
