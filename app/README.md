@@ -4,7 +4,7 @@ praatvol is a native macOS app for room recordings, calls, and audio files.
 The app uses Apple frameworks and OpenRouter for batch transcription with speaker labels.
 The app requires macOS 14.2 or later on Apple Silicon.
 The app requires no Python, virtual drivers, or local models.
-Version 0.1.0 remains unreleased.
+Version 0.1.0 is an early release.
 
 ## Build and install
 
@@ -34,7 +34,7 @@ app/scripts/build.sh release
 
 Drag `app/dist/praatvol.app` into `/Applications`.
 Open `/Applications/praatvol.app` through Finder.
-The release script also creates `app/dist/praatvol-0.1.0.zip`.
+The release script also creates `app/dist/praatvol-0.1.0.dmg` and `app/dist/praatvol-0.1.0.zip`.
 The file `app/VERSION` supplies the bundle version.
 
 The scripts use Swift Package Manager (SwiftPM) and Swift 6 from the Command Line Tools.

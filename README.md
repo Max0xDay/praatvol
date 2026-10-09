@@ -7,9 +7,17 @@ The app also imports audio files from other devices.
 
 ## Status
 
-Version **0.1.0** is unreleased and targets macOS 14.2 or later on Apple Silicon.
+Version **0.1.0** is an early release and targets macOS 14.2 or later on Apple Silicon.
 The app builds with Swift 6 and the Apple Command Line Tools, without Xcode or external packages.
 Capture permissions and real-call quality still require manual checks.
+
+## Install
+
+1. Download `praatvol-0.1.0.dmg` from the [releases page](https://github.com/Max0xDay/praatvol/releases).
+2. Open the disk image and drag `praatvol.app` onto the **Applications** shortcut.
+3. Control-click `praatvol.app` and select **Open** on the first launch, because the app has no notarization.
+   On macOS 15 or later, select **Open Anyway** in **System Settings > Privacy & Security** instead.
+4. Open **Settings…** from the sine-wave icon and enter your OpenRouter key.
 
 ## Quick start
 
@@ -42,7 +50,7 @@ app/scripts/build.sh release
 ```
 
 Drag `app/dist/praatvol.app` into `/Applications`.
-The script also creates `app/dist/praatvol-0.1.0.zip` for distribution.
+The script also creates `app/dist/praatvol-0.1.0.dmg` and `app/dist/praatvol-0.1.0.zip` for distribution.
 The app uses an ad-hoc signature, not notarization.
 See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, storage, and tests.
 

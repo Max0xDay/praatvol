@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-09
 
 This version adds a native menu bar app for macOS 14.2 or later on Apple Silicon.
 The Python beta remains unchanged under `experiments/`.
