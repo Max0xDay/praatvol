@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.1.0 — unreleased
+
+This version adds a native menu bar app for macOS 14.2 or later on Apple Silicon.
+The Python beta remains unchanged under `experiments/`.
+
+### Features
+
+- The sine-wave icon shows capture state and an elapsed timer.
+- The main window adds a Now panel with steps, live meters, file size, duration tiers, progress, and saved summaries.
+- The library lists past items with dates, kinds, duration, speakers, cost, status, and transcript or Finder actions.
+- Confirmed manual retry transcribes failed or untranscribed audio with the current settings.
+- The richer menu adds a status line, signal dots, immediate Stop, Open praatvol, and five recent transcripts.
+- Real upload callbacks report sent bytes, request size, and percent.
+- Transcription progress shows elapsed seconds and an estimate from earlier trials.
+- The native window supports dark and light modes without a focus change at recording start.
+- Call capture combines a microphone with an in-process tap through Core Audio.
+- Room capture uses only the selected microphone.
+- File import preserves the original audio before conversion.
+- The app saves separate raw tracks in Core Audio Format (CAF) before conversion.
+- Raw Free Lossless Audio Codec (FLAC) compression preserves the native rate and channels, with exact sample verification before CAF removal.
+- If encoding or exact verification fails, the app retains the CAF and reports the reason.
+- The app saves a FLAC archive if Apple's encoder supports FLAC.
+- A Waveform Audio File Format (WAV) archive supplies the lossless fallback.
+- Advanced Audio Coding (AAC) copies use 64, 48, or 32 kilobits per second (kbps), based on duration.
+- The request guard checks the estimate and the complete serialized body against 50,000,000 bytes.
+- The app handles provider errors inside successful Hypertext Transfer Protocol (HTTP) responses.
+- The app never retries a paid request automatically.
+- Settings keep the OpenRouter key in Keychain and offer a model field, microphone picker, and lossless option.
+- Service Management supports launch at login for an installed app.
+- Dated folders contain Markdown transcripts, raw JavaScript Object Notation (JSON) responses, and saved audio.
+- Each item stores library metadata and failures in `item.json`.
+- The app preserves failed raw responses in `transcript-error.json`, including errors inside HTTP 200.
+- Notifications open completed transcripts; Finder supplies the fallback if notifications lack permission.
+- Separate dev and release bundles isolate keys, settings, permissions, storage, and logs.
+- Swift Package Manager (SwiftPM) builds, Apple-only icon tools, and ad-hoc signatures require no Xcode project.
+- Offline Swift tests cover core rules, parsing, transcripts, paths, codecs, channel averages, and alignment.
+- New core tests cover job transitions, progress, estimates, duration hints, meters, library metadata, status, retry, and raw verification.
+
+### Fixes
+
+- Capture setup runs outside the main thread with an eight-second watchdog and immediate cancellation controls.
+- The app requests microphone permission before setup and starts the microphone before the system tap.
+- The capture queue removes resources after a cancelled operating-system call returns.
+- The Edit menu preserves Command-V and other text shortcuts in settings.
+- The login option unregisters only an existing Service Management registration.
+- Missing keys preserve audio for a confirmed manual retry.
+
+### Validation and limits
+
+- Microphone capture, system audio prompts, notifications, and login behavior require manual checks on a desktop session.
+- The public models application programming interface (API) lacks reliable transcription identifiers, so the model field remains editable.
+- Earlier duration trials used Opus, not AAC; AAC quality and long AAC requests still require checks.
+- Raw tracks retain CAF if FLAC cannot preserve the samples exactly.
+- Apple supplies no cancellation API for blocked capture calls, so those calls can defer resource cleanup.
+- The 19 offline tests pass with 93.41% core line coverage, above the 70% target.
+- The app guide includes a full checklist for permissions, progress, retries, and both bundle identities.
+- If the FLAC encoder is unavailable, the app reports the WAV fallback in the transcript header.
+- Capture lacks automatic recovery for device changes and drift correction between device clocks.
+- Speaker labels identify voices within one request, not persistent people across recordings.
+- The release app uses an ad-hoc signature and lacks notarization.
+
 ## beta-0.0.1 — 2026-10-08
 
 This release provides an early terminal beta for macOS 14.2 or later.
