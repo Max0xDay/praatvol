@@ -38,5 +38,13 @@ codesign --force --sign - "$applicationPath"
 codesign --verify --strict "$applicationPath"
 if [[ "$variant" == "release" ]]; then
     ditto -c -k --sequesterRsrc --keepParent "$applicationPath" "$applicationDirectory/dist/praatvol-$version.zip"
+    # Drag-to-install disk image: the app next to an Applications shortcut.
+    stagingDirectory="$(mktemp -d)"
+    ditto "$applicationPath" "$stagingDirectory/$applicationName.app"
+    ln -s /Applications "$stagingDirectory/Applications"
+    rm -f "$applicationDirectory/dist/praatvol-$version.dmg"
+    hdiutil create -volname "praatvol $version" -srcfolder "$stagingDirectory" -fs HFS+ -format UDZO \
+        -quiet "$applicationDirectory/dist/praatvol-$version.dmg"
+    rm -r "$stagingDirectory"
 fi
 printf 'Built %s (%s)\n' "$applicationPath" "$bundleIdentifier"
