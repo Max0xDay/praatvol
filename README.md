@@ -39,8 +39,11 @@ Select **Save**.
 Select **Record room** or **Record call**.
 Allow the requested macOS permissions.
 Select **Stop recording** to save the audio and request a transcript.
-Select **Open praatvol…** to inspect the Now panel and library.
-For a failed item, save the correct key and select **Transcribe again…**.
+Select **Open praatvol…** to open the two-pane main window.
+Select **Now** in the sidebar to inspect a live job.
+Select an item in the sidebar to open the detail view.
+For a key failure, save the key again in Settings.
+Select **Transcribe Again…** for the failed item.
 Confirm the new paid request before retry.
 
 Build the release app:
@@ -57,10 +60,21 @@ See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, 
 ## Features
 
 - A sine-wave icon, status line, signal dots, and elapsed timer identify active capture.
-- The main window shows live meters, file size, duration tiers, conversion progress, upload percent, and transcription estimates.
-- The library lists saved items with metadata, status, transcript access, Finder access, and confirmed manual retry.
+- The two-pane main window places the sidebar on the left and the detail view on the right.
+- The toolbar offers Record Call, Record Room, Import Audio, and Settings.
+- A red Cancel or Stop button replaces the capture and import buttons during setup or recording.
+- The live view shows level bars, file size, upload tiers, preparation progress, upload percent, and transcription estimates.
+- The sidebar groups transcribed items and failed items by day, newest first.
+- Unfinished attempts without a transcript or failure stay on disk and remain accessible through Finder.
+- The detail view shows transcript statistics, a preview with speaker labels, or a failure summary with a fix.
+- Calls and rooms show their kind and start time; imported files show the file name without the extension.
+- Rename stores a custom title without a folder name change, and Recent shows titles and dates.
+- Copy Transcript copies the complete Markdown text to the clipboard.
+- Move to Trash asks for confirmation and moves the whole item folder to the macOS Trash for restoration.
+- The app protects the item of the active job from Move to Trash.
+- Item menus offer transcript access, rename, Finder access, and confirmed manual retry for failed items with usable audio.
 - The start watchdog reports permission errors without a blocked interface.
-- Stop remains available throughout capture setup.
+- Cancel remains available throughout capture setup.
 - A call uses the microphone and an in-process tap through Core Audio.
 - A room uses only the microphone.
 - The app supports separate devices for input and output without virtual drivers.
@@ -69,6 +83,8 @@ See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, 
 - Small files can use lossless uploads instead.
 - The app sends one paid request through OpenRouter and never retries automatically.
 - Settings store the key in macOS Keychain and offer a model field and a microphone picker.
+- If a rebuild blocks Keychain access, the app asks you to save the key again in Settings.
+- Settings replaces an inaccessible Keychain item from an earlier build when you save the key again.
 - A completion notification opens the transcript when you click the notification.
 - Each dated folder contains Markdown transcripts and raw JavaScript Object Notation (JSON) responses.
 - The app saves failed response bodies and per-item metadata for the library.

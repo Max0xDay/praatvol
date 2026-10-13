@@ -40,6 +40,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.stop = { [weak self] in self?.stopRecording() }
         viewModel.retry = { [weak self] item in self?.retry(item) }
         viewModel.open = { [weak self] file in self?.openFile(file) }
+        viewModel.recordCall = { [weak self] in self?.recordCall() }
+        viewModel.recordRoom = { [weak self] in self?.recordRoom() }
+        viewModel.transcribeFile = { [weak self] in self?.transcribeFile() }
+        viewModel.openSettings = { [weak self] in self?.openSettings() }
+        viewModel.openLibraryFolder = { [weak self] in self?.openTranscripts() }
+        viewModel.rename = { [weak self] item, name in self?.rename(item, to: name) }
+        viewModel.trash = { [weak self] item in self?.trash(item) }
         reloadLibrary()
         refreshMenu()
         AppLog.shared.event("app-launched")
@@ -79,7 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let recentMenu = NSMenu()
         for item in viewModel.library.filter({ $0.status == .transcribed }).prefix(5) {
             let entry = NSMenuItem(
-                title: "\(item.metadata.date.formatted(date: .abbreviated, time: .shortened)) · \(item.metadata.kind)",
+                title:
+                    "\(ItemPresentation.title(of: item.metadata)) · \(item.metadata.date.formatted(date: .abbreviated, time: .omitted))",
                 action: #selector(openRecent(_:)), keyEquivalent: "")
             entry.target = self
             entry.representedObject = item.transcript
@@ -108,13 +116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshStatus() {
         statusItem.button?.image = sineImage()
         statusItem.button?.imagePosition = .imageLeading
+        // The icon carries the state; text appears only where a number helps: the timer and the upload percentage.
         switch state {
-        case .idle: statusItem.button?.title = ""
-        case .starting: statusItem.button?.title = " Start"
-        case .stopping: statusItem.button?.title = " Save"
-        case .transcribing: statusItem.button?.title = " …"
         case .recording:
             statusItem.button?.title = " " + Transcript.timestamp(Date().timeIntervalSince(recordingDate ?? Date()))
+        case .transcribing where viewModel.state.step == .uploading:
+            statusItem.button?.title = " \(Int(viewModel.fraction * 100))%"
+        default: statusItem.button?.title = ""
         }
         statusItem.button?.toolTip = "\(AppIdentity.name): \(menuStatus())"
         statusItem.menu?.items.first?.title = menuStatus()
@@ -166,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func beginRecording(call: Bool) {
         guard state == .idle else { return }
         state = .starting
-        viewModel.reset(title: call ? "Call" : "Room", call: call)
+        viewModel.reset(title: call ? "Call" : "Room", call: call, recording: true)
         viewModel.advance(.starting)
         recordingPreferences = Preferences.read()
         let identifier = viewModel.identifier
@@ -436,7 +444,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recorder = nil
         timer?.invalidate()
         timer = nil
-        reloadLibrary()
+        let finished = viewModel.state.step
+        let folder = viewModel.folder
+        reloadLibrary { [weak self] in
+            // Hand the finished job over to its library item, so the sidebar's "Now" row disappears.
+            guard let self, finished == .saved || finished == .failed, let folder,
+                self.viewModel.state.step == finished, self.viewModel.folder == folder,
+                self.viewModel.library.contains(where: { $0.folder == folder })
+            else { return }
+            self.viewModel.advance(.idle)
+            self.viewModel.selection = folder.path
+        }
         refreshMenu()
     }
 
@@ -480,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch { AppLog.shared.event("failure-metadata-save-failed", code: (error as NSError).code) }
     }
 
-    private func reloadLibrary() {
+    private func reloadLibrary(then completion: (() -> Void)? = nil) {
         libraryQueue.async {
             do {
                 let items = try Library.scan(root: AppIdentity.root)
@@ -488,6 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.viewModel.library = items
                     self.viewModel.libraryError = nil
                     self.refreshMenu()
+                    completion?()
                 }
             } catch {
                 AppLog.shared.event("library-scan-failed", code: (error as NSError).code)
@@ -519,6 +538,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         mainWindow.show(activate: true)
         process(capture: nil, file: nil, preferences: Preferences.read(), retryItem: item)
+    }
+
+    private func rename(_ item: PraatvolCore.LibraryItem, to name: String) {
+        do {
+            try Library.rename(item, to: name)
+        } catch {
+            AppLog.shared.event("rename-failed", code: (error as NSError).code)
+            showAlert("Cannot rename the item: \(error.localizedDescription)")
+        }
+        reloadLibrary()
+    }
+
+    private func trash(_ item: PraatvolCore.LibraryItem) {
+        guard item.folder != viewModel.folder || !viewModel.busy else { return }
+        let alert = NSAlert()
+        alert.messageText = "Move “\(ItemPresentation.title(of: item.metadata))” to the Trash?"
+        alert.informativeText = "The audio and transcript move to the Trash. You can restore them from there."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try FileManager.default.trashItem(at: item.folder, resultingItemURL: nil)
+            if viewModel.selection == item.id { viewModel.selection = nil }
+        } catch {
+            AppLog.shared.event("trash-failed", code: (error as NSError).code)
+            showAlert("Cannot move the item to the Trash: \(error.localizedDescription)")
+        }
+        reloadLibrary()
     }
 
     private func openFile(_ file: URL) {

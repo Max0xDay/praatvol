@@ -56,7 +56,11 @@ enum Keychain {
         guard status == errSecSuccess, let bytes = item as? Data,
             let key = String(data: bytes, encoding: .utf8)
         else {
-            throw PraatvolError("Keychain access failed (\(status)). Allow access for \(AppIdentity.name).")
+            // Ad-hoc builds get a new signature on every rebuild, so macOS treats the saved item as another app's.
+            AppLog.shared.event("keychain-read-failed", code: Int(status))
+            throw PraatvolError(
+                "Keychain access failed: macOS blocked \(AppIdentity.name) from reading the saved OpenRouter key. Save the key again in Settings."
+            )
         }
         return key
     }
@@ -64,6 +68,11 @@ enum Keychain {
         let bytes = Data(key.utf8)
         let updates: [String: Any] = [kSecValueData as String: bytes]
         var status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
+        if status == errSecAuthFailed || status == errSecInteractionNotAllowed {
+            // The item belongs to an earlier build's signature: replace it so this build owns it.
+            _ = SecItemDelete(query as CFDictionary)
+            status = errSecItemNotFound
+        }
         if status == errSecItemNotFound {
             var item = query
             item[kSecValueData as String] = bytes

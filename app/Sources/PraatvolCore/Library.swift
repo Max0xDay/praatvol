@@ -18,6 +18,8 @@ public struct ItemMetadata: Codable, Equatable, Sendable {
     public var speakerCount: Int = 0
     public var wordCount: Int = 0
     public var offsetSeconds: Double = 0
+    /// A name the user gave the item. Nil shows the generated title.
+    public var title: String?
     public init(date: Date, kind: String, sources: String) {
         self.date = date
         self.kind = kind
@@ -61,6 +63,13 @@ public enum Library {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(metadata).write(to: folder.appendingPathComponent("item.json"), options: .atomic)
+    }
+    /// Stores a display name in item.json. The folder on disk keeps its timestamp name. Blank names reset the title.
+    public static func rename(_ item: LibraryItem, to name: String) throws {
+        let hasMetadata = FileManager.default.fileExists(atPath: item.folder.appendingPathComponent("item.json").path)
+        var metadata = hasMetadata ? try load(folder: item.folder) : item.metadata
+        metadata.title = ItemPresentation.cleanTitle(name)
+        try save(metadata, folder: item.folder)
     }
     public static func load(folder: URL) throws -> ItemMetadata {
         let decoder = JSONDecoder()
