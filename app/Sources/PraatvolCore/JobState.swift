@@ -5,6 +5,7 @@ public enum JobStep: String, CaseIterable, Sendable {
     case starting = "Starting"
     case recording = "Recording"
     case preparing = "Preparing audio"
+    case review = "Review"
     case uploading = "Uploading"
     case transcribing = "Transcribing"
     case saved = "Saved"
@@ -17,7 +18,8 @@ public struct JobState: Sendable {
     public mutating func advance(to next: JobStep) throws {
         let allowed: [JobStep: Set<JobStep>] = [
             .idle: [.starting, .preparing], .starting: [.recording, .failed, .idle],
-            .recording: [.preparing, .failed], .preparing: [.uploading, .failed, .idle],
+            .recording: [.preparing, .failed], .preparing: [.review, .uploading, .failed, .idle],
+            .review: [.uploading, .preparing, .saved, .idle, .failed],
             .uploading: [.transcribing, .failed], .transcribing: [.saved, .failed],
             .saved: [.starting, .preparing, .idle], .failed: [.starting, .preparing, .idle],
         ]
@@ -29,6 +31,17 @@ public struct JobState: Sendable {
 }
 
 public enum JobProgress {
+    public static func reviewWarnings(preparationWarnings: [String], durationSeconds: Double) -> [String] {
+        // Preparation errors can contain private paths; expose only fixed summaries to local clients.
+        var warnings: [String] = []
+        if !preparationWarnings.isEmpty {
+            warnings.append("Audio preparation reported warnings; check the saved audio before transcribing.")
+        }
+        if UploadRules.isBeyondTestedLength(durationSeconds) {
+            warnings.append("Beyond tested length; may time out")
+        }
+        return warnings
+    }
     public static func fraction(completed: Int64, total: Int64) -> Double {
         guard total > 0 else { return 0 }
         return min(1, max(0, Double(completed) / Double(total)))

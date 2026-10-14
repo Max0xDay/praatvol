@@ -82,9 +82,8 @@ See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, 
 - Advanced Audio Coding (AAC) uploads use duration-based target bitrates in an MPEG-4 Audio (M4A) file.
 - Small files can use lossless uploads instead.
 - The app sends one paid request through OpenRouter and never retries automatically.
-- Settings store the key in macOS Keychain and offer a model field and a microphone picker.
-- If a rebuild blocks Keychain access, the app asks you to save the key again in Settings.
-- Settings replaces an inaccessible Keychain item from an earlier build when you save the key again.
+- Settings store the key in a private file in the app's Application Support folder and offer a model field and a microphone picker.
+- The app never uses the macOS Keychain, so rebuilds do not ask for your password.
 - A completion notification opens the transcript when you click the notification.
 - Each dated folder contains Markdown transcripts and raw JavaScript Object Notation (JSON) responses.
 - The app saves failed response bodies and per-item metadata for the library.
@@ -197,7 +196,7 @@ The file `app/.swift-format` sets the indentation and line length for all format
 
 - `app/` contains the production Swift package, tests, scripts, and app guide.
 - `app/Sources/PraatvolCore/` contains job states, progress math, meters, the library, upload rules, transcripts, and audio conversion.
-- `app/Sources/Praatvol/` contains the main window, menu bar, capture, progress callbacks, settings, Keychain, and notifications.
+- `app/Sources/Praatvol/` contains the main window, menu bar, capture, progress callbacks, settings, key storage, and notifications.
 - `experiments/poc/` contains the legacy beta and its offline tests.
 - `experiments/system-audio/` contains the proven Swift helper for the legacy beta.
 - `experiments/compression-quality/` compares upload codecs against a lossless reference.

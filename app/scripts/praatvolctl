@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+supportDirectory="praatvol"
+if [[ "${1:-}" == "--dev" ]]; then
+    supportDirectory="praatvol-dev"
+    shift
+fi
+command="${1:-}"
+case "$command" in
+    status|record-room|record-call|stop|subscribe|transcribe|keep) ;;
+    *) printf 'Usage: %s [--dev] status|record-room|record-call|stop|subscribe|transcribe|keep\n' "$0" >&2; exit 1 ;;
+esac
+if [[ "$#" -ne 1 ]]; then
+    printf 'Expected one command.\n' >&2
+    exit 1
+fi
+
+# #COMPLETION_DRIVE: python3 is available through the Apple Command Line Tools on the client machine.
+# #SUGGEST_VERIFY: Install the Command Line Tools if python3 is unavailable.
+exec python3 -c '
+import json
+import os
+import socket
+import sys
+
+socket_path = os.path.expanduser("~/Library/Application Support/" + sys.argv[1] + "/control.sock")
+command = sys.argv[2]
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(10)
+        connection.connect(socket_path)
+        connection.sendall((json.dumps({"cmd": command}) + "\n").encode("utf-8"))
+        if command == "subscribe":
+            connection.settimeout(None)
+        with connection.makefile("r", encoding="utf-8") as replies:
+            for reply in replies:
+                print(reply, end="", flush=True)
+                if command != "subscribe":
+                    sys.exit(0 if json.loads(reply).get("ok") else 1)
+        if command != "subscribe":
+            raise ConnectionError("The app closed without a reply.")
+except KeyboardInterrupt:
+    sys.exit(130)
+except (OSError, ValueError) as error:
+    print("praatvolctl: " + str(error), file=sys.stderr)
+    sys.exit(1)
+' "$supportDirectory" "$command"

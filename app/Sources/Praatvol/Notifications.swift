@@ -11,9 +11,13 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func post(title: String, message: String, file: URL?, failure: Bool = false) {
+    func post(
+        title: String, message: String, file: URL?, failure: Bool = false, alertOnFailure: Bool = true,
+        allowAutomaticPresentation: Bool = true
+    ) {
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized else {
+                guard allowAutomaticPresentation else { return }
                 DispatchQueue.main.async {
                     if let file { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                     if failure { showAlert(message, title: title) }
@@ -29,9 +33,10 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
             self.center.add(request) { error in
                 if let error {
                     AppLog.shared.event("notification-post-failed", code: (error as NSError).code)
+                    guard allowAutomaticPresentation else { return }
                     DispatchQueue.main.async {
                         if let file { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-                        showAlert(message, title: title)
+                        if alertOnFailure { showAlert(message, title: title) }
                     }
                 }
             }

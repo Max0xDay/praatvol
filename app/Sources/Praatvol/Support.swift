@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import PraatvolCore
-import Security
 
 struct AppIdentity {
     // #COMPLETION_DRIVE: A bare SwiftPM executable defaults to dev identity, never production.
@@ -10,7 +9,10 @@ struct AppIdentity {
     static let isDevelopment = bundleIdentifier.hasSuffix(".dev")
     static let name = isDevelopment ? "praatvol Dev" : "praatvol"
     static let root = Storage.root(isDevelopment: isDevelopment)
-    static let keychainService = bundleIdentifier
+    static let supportDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support")
+        .appendingPathComponent(root.lastPathComponent)
+    static let controlSocket = supportDirectory.appendingPathComponent("control.sock")
 }
 
 final class AppLog {
@@ -39,47 +41,20 @@ final class AppLog {
     }
 }
 
-enum Keychain {
-    private static var query: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AppIdentity.keychainService,
-            kSecAttrAccount as String: "openrouter-api-key",
-        ]
-    }
+enum KeyStore {
+    private static let store = FileKeyStore(directory: AppIdentity.supportDirectory)
+    private static let lock = NSLock()
+
     static func read() throws -> String {
-        var lookup = query
-        lookup[kSecReturnData as String] = true
-        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(lookup as CFDictionary, &item)
-        if status == errSecItemNotFound { return "" }
-        guard status == errSecSuccess, let bytes = item as? Data,
-            let key = String(data: bytes, encoding: .utf8)
-        else {
-            // Ad-hoc builds get a new signature on every rebuild, so macOS treats the saved item as another app's.
-            AppLog.shared.event("keychain-read-failed", code: Int(status))
-            throw PraatvolError(
-                "Keychain access failed: macOS blocked \(AppIdentity.name) from reading the saved OpenRouter key. Save the key again in Settings."
-            )
-        }
-        return key
+        lock.lock()
+        defer { lock.unlock() }
+        return try store.read()
     }
+
     static func save(_ key: String) throws {
-        let bytes = Data(key.utf8)
-        let updates: [String: Any] = [kSecValueData as String: bytes]
-        var status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
-        if status == errSecAuthFailed || status == errSecInteractionNotAllowed {
-            // The item belongs to an earlier build's signature: replace it so this build owns it.
-            _ = SecItemDelete(query as CFDictionary)
-            status = errSecItemNotFound
-        }
-        if status == errSecItemNotFound {
-            var item = query
-            item[kSecValueData as String] = bytes
-            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            status = SecItemAdd(item as CFDictionary, nil)
-        }
-        guard status == errSecSuccess else { throw PraatvolError("Cannot save the API key in Keychain (\(status)).") }
+        lock.lock()
+        defer { lock.unlock() }
+        try store.save(key)
     }
 }
 
@@ -87,12 +62,26 @@ struct Preferences {
     let model: String
     let microphoneIdentifier: String
     let lossless: Bool
+    let askBeforeTranscribing: Bool
+    let controlSocketEnabled: Bool
     static func read() -> Preferences {
         let defaults = UserDefaults.standard
         return Preferences(
             model: defaults.string(forKey: "model") ?? "elevenlabs/scribe-v2",
             microphoneIdentifier: defaults.string(forKey: "microphone") ?? "",
-            lossless: defaults.bool(forKey: "lossless"))
+            lossless: defaults.bool(forKey: "lossless"),
+            askBeforeTranscribing: defaults.bool(forKey: "askBeforeTranscribing"),
+            controlSocketEnabled: defaults.object(forKey: "controlSocketEnabled") as? Bool ?? true)
+    }
+}
+
+enum AppModal {
+    static var attentionChanged: (Bool) -> Void = { _ in }
+
+    static func run(_ action: () -> NSApplication.ModalResponse) -> NSApplication.ModalResponse {
+        attentionChanged(true)
+        defer { attentionChanged(false) }
+        return action()
     }
 }
 
@@ -102,5 +91,5 @@ func showAlert(_ message: String, title: String = AppIdentity.name) {
     alert.messageText = title
     alert.informativeText = message
     alert.addButton(withTitle: "OK")
-    alert.runModal()
+    _ = AppModal.run { alert.runModal() }
 }

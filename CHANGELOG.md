@@ -4,6 +4,15 @@
 
 ### Features
 
+- Optional **Ask before transcribing** adds a non-modal review step after preparation and defaults to off.
+- Review offers **Transcribe** and **Keep audio only** in the menu and Now panel, with a **Ready to transcribe** notification.
+- Control protocol v1 adds `review`, `transcribe`, `keep`, and `notReviewing` without removing existing fields.
+- Snapshots add step start time, estimated transcription seconds, preparation fraction, audio duration, upload bytes, and safe review warnings.
+- Active jobs push snapshots once per second, with preparation and upload fraction changes limited to four pushes per second.
+- Kept audio remains untranscribed and retryable in the Library, and Quit during review keeps audio without a paid request.
+- A private local control socket adds room recording, call recording, stop, status, and pushed JSON snapshots for external controls.
+- The `praatvolctl` helper supports dev and release sockets without a network listener.
+- Settings adds **Enable control socket**, on by default, which starts or stops the socket on save without a relaunch.
 - The native two-pane main window adds a sidebar, a detail view, and a window toolbar.
 - The toolbar offers Record Call, Record Room, Import Audio, and Settings, with a red Cancel or Stop button during capture.
 - Command-period cancels setup or stops capture.
@@ -19,9 +28,12 @@
 
 ### Fixes
 
-- The sidebar excludes unfinished attempts without transcripts or failures; Finder still provides access to those folders.
-- Settings replaces an inaccessible Keychain item from an earlier build when you save the key again.
-- Keychain read failures explain the access problem and ask you to save the key again in Settings.
+- Socket-started recordings stay in the background while still sending review, completion, and failure notifications.
+- The sidebar excludes incomplete leftovers without a known duration but includes prepared untranscribed audio for manual retry.
+- By default, preparation warnings appear once as a notification instead of a blocking review alert, and transcription proceeds automatically.
+- Settings stores the OpenRouter key atomically in a private Application Support file with owner-only permissions.
+- There is no Keychain migration.
+- Enter the OpenRouter key once in Settings.
 
 ## 0.1.0 — 2026-10-09
 
