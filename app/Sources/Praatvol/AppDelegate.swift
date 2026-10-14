@@ -12,6 +12,10 @@ private enum AppState {
     }
 }
 
+private enum RecordingOrigin {
+    case menu, control
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var state: AppState = .idle
@@ -22,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recorder: Recorder?
     private var recordingDate: Date?
     private var recordingPreferences = Preferences.read()
+    private var recordingOrigin: RecordingOrigin = .menu
     private var timer: Timer?
     private var job: Task<Void, Never>?
     private var authorizedTermination = false
@@ -212,11 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
-    @objc private func recordCall() { beginRecording(call: true) }
-    @objc private func recordRoom() { beginRecording(call: false) }
+    @objc private func recordCall() { beginRecording(call: true, origin: .menu) }
+    @objc private func recordRoom() { beginRecording(call: false, origin: .menu) }
 
-    private func beginRecording(call: Bool) {
+    private func beginRecording(call: Bool, origin: RecordingOrigin) {
         guard state == .idle else { return }
+        recordingOrigin = origin
         state = .starting
         viewModel.reset(title: call ? "Call" : "Room", call: call, recording: true)
         recordingPreferences = Preferences.read()
@@ -234,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startWatchdog = watchdog
         DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: watchdog)
-        mainWindow.show(activate: false)
+        if origin == .menu { mainWindow.show(activate: false) }
         refreshMenu()
         AVCaptureDevice.requestAccess(for: .audio) { allowed in
             DispatchQueue.main.async {
@@ -312,6 +318,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.advance(.failed)
         refreshMenu()
         AppLog.shared.event("capture-setup-cancelled")
+        if recordingOrigin == .control {
+            notifications.post(
+                title: "Recording failed", message: message, file: nil, failure: true,
+                allowAutomaticPresentation: false)
+        }
+        recordingOrigin = .menu
     }
 
     private func tick() {
@@ -338,7 +350,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if recorder?.microphoneProblem() == true {
                 AppLog.shared.event("microphone-stalled")
                 stopRecording()
-                showAlert(Recorder.microphoneHelp)
+                if recordingOrigin == .menu {
+                    showAlert(Recorder.microphoneHelp)
+                } else {
+                    notifications.post(
+                        title: "Recording failed", message: Recorder.microphoneHelp, file: nil, failure: true,
+                        allowAutomaticPresentation: false)
+                }
             }
         }
     }
@@ -368,6 +386,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.state = .idle
                     self.viewModel.message = "The recorder saved no track. Check capture permissions."
                     self.viewModel.advance(.failed)
+                    if self.recordingOrigin == .control {
+                        self.notifications.post(
+                            title: "Recording failed", message: self.viewModel.message, file: nil, failure: true,
+                            allowAutomaticPresentation: false)
+                    }
+                    self.recordingOrigin = .menu
                     self.refreshMenu()
                     if quitAfterSave { self.terminate() }
                     return
@@ -388,7 +412,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = try await Task.detached { try TranscriptionJob.prepare(capture: capture, report: report) }.value
             } catch {
                 AppLog.shared.event("quit-archive-failed", code: (error as NSError).code)
-                showAlert("The raw audio stays saved in \(capture.folder.path).\n\n\(error.localizedDescription)")
+                let message = "The raw audio stays saved in \(capture.folder.path).\n\n\(error.localizedDescription)"
+                if recordingOrigin == .menu {
+                    showAlert(message)
+                } else {
+                    notifications.post(
+                        title: "Recording failed", message: message, file: nil, failure: true,
+                        allowAutomaticPresentation: false)
+                }
             }
             terminate()
         }
@@ -411,6 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         capture: CapturedItem?, file: URL?, preferences: Preferences, retryItem: PraatvolCore.LibraryItem? = nil
     ) {
         state = .transcribing
+        if capture == nil { recordingOrigin = .menu }
         if let file { viewModel.reset(title: "File: \(file.lastPathComponent)") }
         if let retryItem { viewModel.reset(title: retryItem.metadata.kind) }
         viewModel.includesReview = preferences.askBeforeTranscribing
@@ -461,7 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notifications.post(
                     title: "Transcription failed",
                     message: error.localizedDescription + "\nThe audio stays saved. No paid request was retried.",
-                    file: folder, failure: true)
+                    file: folder, failure: true, allowAutomaticPresentation: recordingOrigin == .menu)
             }
             finishJob()
         }
@@ -496,7 +528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Double(uploadBytes) / 1_000_000)
                 notifications.post(
                     title: "Ready to transcribe", message: ([details] + viewModel.warnings).joined(separator: "\n"),
-                    file: nil, alertOnFailure: false)
+                    file: nil, alertOnFailure: false, allowAutomaticPresentation: recordingOrigin == .menu)
             }
             guard shouldTranscribe else { return }
         } else {
@@ -511,7 +543,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.message =
             completion.hasSpeakerLabels ? "The transcript is ready." : "The transcript has no speaker labels."
         viewModel.advance(.saved)
-        notifications.post(title: "Transcript ready", message: viewModel.message, file: completion.transcript)
+        notifications.post(
+            title: "Transcript ready", message: viewModel.message, file: completion.transcript,
+            allowAutomaticPresentation: recordingOrigin == .menu)
     }
 
     @objc private func transcribeReviewedAudio() { decideReview(transcribe: true) }
@@ -538,10 +572,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppLog.shared.event("transcribing-with-warnings")
         notifications.post(
             title: "Transcribing with warnings", message: warnings.joined(separator: "\n\n"),
-            file: nil, alertOnFailure: false)
+            file: nil, alertOnFailure: false, allowAutomaticPresentation: recordingOrigin == .menu)
     }
 
     private func finishJob() {
+        recordingOrigin = .menu
         state = .idle
         job = nil
         recorder = nil
@@ -809,8 +844,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         switch command {
-        case .recordRoom: beginRecording(call: false)
-        case .recordCall: beginRecording(call: true)
+        case .recordRoom: beginRecording(call: false, origin: .control)
+        case .recordCall: beginRecording(call: true, origin: .control)
         case .stop: stopRecording()
         case .transcribe: transcribeReviewedAudio()
         case .keep: keepReviewedAudio()

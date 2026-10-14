@@ -28,6 +28,7 @@
 
 ### Fixes
 
+- Socket-started recordings stay in the background while still sending review, completion, and failure notifications.
 - The sidebar excludes incomplete leftovers without a known duration but includes prepared untranscribed audio for manual retry.
 - By default, preparation warnings appear once as a notification instead of a blocking review alert, and transcription proceeds automatically.
 - Settings stores the OpenRouter key atomically in a private Application Support file with owner-only permissions.

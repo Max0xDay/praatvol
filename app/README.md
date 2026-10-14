@@ -201,6 +201,7 @@ During review, Quit keeps the saved audio without a paid request or a confirmati
 ## Control socket
 
 The running app accepts local commands over a Unix stream socket.
+Socket-started recordings stay in the background through review, completion, and failure, without automatic windows, alerts, or Finder reveals.
 The release socket is `~/Library/Application Support/praatvol/control.sock`.
 The dev socket is `~/Library/Application Support/praatvol-dev/control.sock`.
 Dev and release can run side by side.
