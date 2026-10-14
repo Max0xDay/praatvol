@@ -106,6 +106,13 @@ private func item(_ kind: String, _ when: String) -> LibraryItem {
     let failed = try folder("failed", files: ["audio.flac"], status: .failed)
     let leftover = try folder("leftover", files: ["mic.caf"])
     #expect(ItemPresentation.listed([done, failed, leftover]).map(\.id) == [done.id, failed.id])
+    let prepared = try folder("kept", files: ["audio.flac"])
+    var metadata = prepared.metadata
+    metadata.durationSeconds = 120
+    let kept = LibraryItem(folder: prepared.folder, metadata: metadata)
+    #expect(ItemPresentation.listed([leftover, kept]).map(\.id) == [kept.id])
+    #expect(kept.status == .notTranscribed)
+    #expect(kept.canRetry)
 }
 
 @Test func fileTitlesDropTheExtension() {

@@ -29,7 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: MainWindow!
     private var startIdentifier: UUID?
     private var startWatchdog: DispatchWorkItem?
-    private var stepDate = Date()
+    private var reviewContinuation: CheckedContinuation<Bool, Never>?
+    private var quitAfterReview = false
+    private var controlServer: ControlServer?
+    private var modalDepth = 0
+    private var lastControlTickSeconds = 0.0
+    private var lastControlPublishSeconds = 0.0
+    private var lastControlStatus: ControlStatus?
+    private var pendingControlPublish: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -38,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notifications.configure()
         mainWindow = MainWindow(model: viewModel)
         viewModel.stop = { [weak self] in self?.stopRecording() }
+        viewModel.transcribe = { [weak self] in self?.transcribeReviewedAudio() }
+        viewModel.keep = { [weak self] in self?.keepReviewedAudio() }
         viewModel.retry = { [weak self] item in self?.retry(item) }
         viewModel.open = { [weak self] file in self?.openFile(file) }
         viewModel.recordCall = { [weak self] in self?.recordCall() }
@@ -47,9 +56,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.openLibraryFolder = { [weak self] in self?.openTranscripts() }
         viewModel.rename = { [weak self] item, name in self?.rename(item, to: name) }
         viewModel.trash = { [weak self] item in self?.trash(item) }
+        viewModel.stepChanged = { [weak self] in self?.publishStatus() }
+        AppModal.attentionChanged = { [weak self] visible in
+            guard let self else { return }
+            self.modalDepth += visible ? 1 : -1
+            self.publishStatus()
+        }
+        settings.saved = { [weak self] in self?.applyControlSocketSetting() }
+        applyControlSocketSetting()
         reloadLibrary()
         refreshMenu()
         AppLog.shared.event("app-launched")
+    }
+
+    // Starts the server when enabled and stops it (closing clients, removing the socket) when disabled.
+    @MainActor private func applyControlSocketSetting() {
+        // #COMPLETION_DRIVE: Live start and stop after Settings save is verified by build and tests only, not by launching the app.
+        // #SUGGEST_VERIFY: Toggle the box off and on, then check control.sock is removed and recreated with 0600 and the directory with 0700.
+        guard Preferences.read().controlSocketEnabled else {
+            controlServer?.stop()
+            controlServer = nil
+            return
+        }
+        guard controlServer == nil else { return }
+        let server = ControlServer(socketURL: AppIdentity.controlSocket) { [weak self] command, completion in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.handleControl(command, completion: completion)
+            }
+        }
+        controlServer = server
+        server.start()
+        publishStatus()
     }
 
     // An accessory app has no main menu, so Cmd+X/C/V/A need an Edit menu to reach text fields.
@@ -79,6 +117,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 state == .starting ? "Stop / Cancel setup" : "Stop recording", action: #selector(stopRecording),
                 to: menu)
         }
+        if viewModel.state.step == .review {
+            add("Transcribe", action: #selector(transcribeReviewedAudio), to: menu)
+            add("Keep audio only", action: #selector(keepReviewedAudio), to: menu)
+        }
         menu.addItem(.separator())
         add("Transcribe file…", action: #selector(transcribeFile), to: menu, enabled: state == .idle)
         add("Open praatvol…", action: #selector(openMainWindow), to: menu)
@@ -101,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add("Quit", action: #selector(quit), to: menu)
         statusItem.menu = menu
         refreshStatus()
+        publishStatus()
     }
 
     private func menuStatus() -> String {
@@ -109,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let system = viewModel.isCall ? " · system \(viewModel.systemLevel.hasSignal ? "●" : "○")" : ""
             return "Recording \(Transcript.timestamp(viewModel.elapsedSeconds)) · mic \(microphone)\(system)"
         }
+        if viewModel.state.step == .review { return "Ready to transcribe" }
         if viewModel.state.step == .uploading { return "Uploading \(Int(viewModel.fraction * 100))%" }
         return state == .idle ? "Idle" : viewModel.state.step.rawValue + "…"
     }
@@ -175,12 +219,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state == .idle else { return }
         state = .starting
         viewModel.reset(title: call ? "Call" : "Room", call: call, recording: true)
-        viewModel.advance(.starting)
         recordingPreferences = Preferences.read()
         let identifier = viewModel.identifier
         startIdentifier = identifier
         let recorder = Recorder()
         self.recorder = recorder
+        viewModel.advance(.starting)
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self, self.startIdentifier == identifier else { return }
             self.cancelSetup(
@@ -228,9 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.startWatchdog?.cancel()
                     self.startIdentifier = nil
                     self.state = .recording
+                    self.recordingDate = Date()
                     self.viewModel.advance(.recording)
                     self.viewModel.folder = recorder.folder
-                    self.recordingDate = Date()
                     self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                         self?.tick()
                     }
@@ -264,8 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // #SUGGEST_VERIFY: Confirm cleanup after prompt dismissal; relaunch if the operating-system call never returns.
         // Cleanup runs on the capture queue after the blocked call returns, never concurrently with setup.
         state = .idle
-        viewModel.advance(.failed)
         viewModel.message = message
+        viewModel.advance(.failed)
         refreshMenu()
         AppLog.shared.event("capture-setup-cancelled")
     }
@@ -280,7 +324,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewModel.elapsedSeconds = Date().timeIntervalSince(recordingDate ?? Date())
             if let folder = viewModel.folder { updateDiskSize(folder) }
         }
+        if viewModel.state.step == .transcribing {
+            viewModel.elapsedSeconds = Date().timeIntervalSince(viewModel.stepDate)
+        }
         refreshStatus()
+        let uptimeSeconds = ProcessInfo.processInfo.systemUptime
+        if uptimeSeconds - lastControlTickSeconds >= 1 {
+            lastControlTickSeconds = uptimeSeconds
+            publishStatus(force: true)
+        }
         guard state == .recording, let recordingDate else { return }
         if Date().timeIntervalSince(recordingDate) > 5 {
             if recorder?.microphoneProblem() == true {
@@ -304,7 +356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer?.invalidate()
         timer = nil
         state = .stopping
+        viewModel.durationSeconds = viewModel.elapsedSeconds
         viewModel.advance(.preparing)
+        startJobTimer()
         refreshMenu()
         let preferences = recordingPreferences
         captureQueue.async {
@@ -312,8 +366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let capture else {
                     self.state = .idle
-                    self.viewModel.advance(.failed)
                     self.viewModel.message = "The recorder saved no track. Check capture permissions."
+                    self.viewModel.advance(.failed)
                     self.refreshMenu()
                     if quitAfterSave { self.terminate() }
                     return
@@ -347,7 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.message = "Choose an audio file that AVFoundation can read."
-        if panel.runModal() == .OK, let file = panel.url {
+        if AppModal.run({ panel.runModal() }) == .OK, let file = panel.url {
             mainWindow.show(activate: true)
             process(capture: nil, file: file, preferences: Preferences.read())
         }
@@ -359,7 +413,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state = .transcribing
         if let file { viewModel.reset(title: "File: \(file.lastPathComponent)") }
         if let retryItem { viewModel.reset(title: retryItem.metadata.kind) }
+        viewModel.includesReview = preferences.askBeforeTranscribing
         viewModel.advance(.preparing)
+        startJobTimer()
         refreshMenu()
         let report = reporter()
         job = Task { @MainActor in
@@ -383,35 +439,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     metadata.errorMessage = nil
                     try Library.save(metadata, folder: itemFolder)
                 }
+                let durationSource = capture?.microphone ?? file ?? retryItem?.retrySource
+                if let durationSource {
+                    viewModel.durationSeconds = try await Task.detached {
+                        try AudioFiles.duration(durationSource)
+                    }.value
+                    publishStatus()
+                }
                 let prepared = try await Task.detached {
                     if let capture { return try TranscriptionJob.prepare(capture: capture, report: report) }
                     if let retryItem { return try TranscriptionJob.prepareRetry(item: retryItem, report: report) }
                     guard let file else { throw PraatvolError("No source audio exists.") }
                     return try TranscriptionJob.prepare(file: file, folder: itemFolder, report: report)
                 }.value
-                viewModel.durationSeconds = prepared.durationSeconds
-                guard approveUpload(prepared) else {
-                    viewModel.advance(.idle)
-                    viewModel.message = "The audio stays saved. Choose Transcribe again for a paid request."
-                    finishJob()
-                    return
-                }
-                let key = try Keychain.read()
-                let completion = try await Task.detached {
-                    try await TranscriptionJob.transcribe(
-                        item: prepared, preferences: preferences, apiKey: key, report: report)
-                }.value
-                if viewModel.state.step == .uploading { viewModel.advance(.transcribing) }
-                viewModel.advance(.saved)
-                viewModel.summary = completion.metadata
-                viewModel.message =
-                    completion.hasSpeakerLabels ? "The transcript is ready." : "The transcript has no speaker labels."
-                notifications.post(title: "Transcript ready", message: viewModel.message, file: completion.transcript)
+                try await processPrepared(prepared, preferences: preferences, report: report)
             } catch {
                 AppLog.shared.event("transcription-failed", code: (error as NSError).code)
                 if let folder { saveFailure(folder: folder, message: error.localizedDescription) }
-                viewModel.advance(.failed)
                 viewModel.message = error.localizedDescription
+                viewModel.advance(.failed)
                 notifications.post(
                     title: "Transcription failed",
                     message: error.localizedDescription + "\nThe audio stays saved. No paid request was retried.",
@@ -421,21 +467,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func approveUpload(_ item: PreparedItem) -> Bool {
+    private func startJobTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
+    }
+
+    @MainActor private func processPrepared(
+        _ prepared: PreparedItem, preferences: Preferences, report: @escaping JobReporter
+    ) async throws {
+        viewModel.durationSeconds = prepared.durationSeconds
+        let upload = preferences.lossless ? prepared.archive.url : prepared.upload
+        let uploadBytes = try await Task.detached {
+            let attributes = try FileManager.default.attributesOfItem(atPath: upload.path)
+            guard let size = attributes[.size] as? NSNumber else { throw PraatvolError("Upload size is unavailable.") }
+            return size.int64Value
+        }.value
+        viewModel.uploadBytes = uploadBytes
+        if preferences.askBeforeTranscribing {
+            viewModel.warnings = JobProgress.reviewWarnings(
+                preparationWarnings: prepared.warnings, durationSeconds: prepared.durationSeconds)
+            let shouldTranscribe = await withCheckedContinuation { continuation in
+                reviewContinuation = continuation
+                viewModel.message = "Audio is saved. Choose whether to transcribe."
+                viewModel.advance(.review)
+                refreshMenu()
+                let details = String(
+                    format: "%@ · %.1f MB", Transcript.duration(prepared.durationSeconds),
+                    Double(uploadBytes) / 1_000_000)
+                notifications.post(
+                    title: "Ready to transcribe", message: ([details] + viewModel.warnings).joined(separator: "\n"),
+                    file: nil, alertOnFailure: false)
+            }
+            guard shouldTranscribe else { return }
+        } else {
+            notifyUploadWarnings(prepared)
+        }
+        let key = try KeyStore.read()
+        let completion = try await Task.detached {
+            try await TranscriptionJob.transcribe(item: prepared, preferences: preferences, apiKey: key, report: report)
+        }.value
+        if viewModel.state.step == .uploading { viewModel.advance(.transcribing) }
+        viewModel.summary = completion.metadata
+        viewModel.message =
+            completion.hasSpeakerLabels ? "The transcript is ready." : "The transcript has no speaker labels."
+        viewModel.advance(.saved)
+        notifications.post(title: "Transcript ready", message: viewModel.message, file: completion.transcript)
+    }
+
+    @objc private func transcribeReviewedAudio() { decideReview(transcribe: true) }
+    @objc private func keepReviewedAudio() { decideReview(transcribe: false) }
+
+    private func decideReview(transcribe: Bool) {
+        guard viewModel.state.step == .review, let continuation = reviewContinuation else { return }
+        reviewContinuation = nil
+        viewModel.warnings = []
+        viewModel.message = transcribe ? "Send audio to OpenRouter" : "Audio saved without transcription."
+        viewModel.advance(transcribe ? .uploading : .saved)
+        refreshMenu()
+        continuation.resume(returning: transcribe)
+    }
+
+    private func notifyUploadWarnings(_ item: PreparedItem) {
         var warnings = item.warnings
         if UploadRules.isBeyondTestedLength(item.durationSeconds) {
             warnings.append(
                 "Beyond tested length; may time out; recording saved locally. The AAC duration rule follows Opus trials, not AAC trials."
             )
         }
-        if warnings.isEmpty { return true }
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Review the saved audio"
-        alert.informativeText = warnings.joined(separator: "\n\n")
-        alert.addButton(withTitle: "Transcribe")
-        alert.addButton(withTitle: "Keep audio only")
-        return alert.runModal() == .alertFirstButtonReturn
+        if warnings.isEmpty { return }
+        AppLog.shared.event("transcribing-with-warnings")
+        notifications.post(
+            title: "Transcribing with warnings", message: warnings.joined(separator: "\n\n"),
+            file: nil, alertOnFailure: false)
     }
 
     private func finishJob() {
@@ -456,10 +559,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.viewModel.selection = folder.path
         }
         refreshMenu()
+        if quitAfterReview { terminate() }
     }
 
     private func acceptsProgress(_ identifier: UUID) -> Bool {
         guard viewModel.identifier == identifier else { return false }
+        if viewModel.state.step == .review { return false }
         switch state {
         case .transcribing, .stopping: return true
         default: return false
@@ -471,20 +576,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return { [weak self] update in
             DispatchQueue.main.async {
                 guard let self, self.acceptsProgress(identifier) else { return }
-                if update.step == .transcribing, self.viewModel.state.step != .transcribing {
-                    self.stepDate = Date()
-                    self.timer?.invalidate()
-                    self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                        guard let self else { return }
-                        self.viewModel.elapsedSeconds = Date().timeIntervalSince(self.stepDate)
-                    }
-                }
-                self.viewModel.advance(update.step)
                 self.viewModel.message = update.message
-                self.viewModel.fraction = update.fraction
                 self.viewModel.sentBytes = update.sentBytes
                 self.viewModel.totalBytes = update.totalBytes
+                self.viewModel.advance(update.step)
+                self.viewModel.fraction = update.fraction
                 self.refreshStatus()
+                self.publishStatus()
             }
         }
     }
@@ -535,7 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "OpenRouter charges for a new request. A failed or timed-out request may already have a charge. Check your account first."
         alert.addButton(withTitle: "Transcribe again")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard AppModal.run({ alert.runModal() }) == .alertFirstButtonReturn else { return }
         mainWindow.show(activate: true)
         process(capture: nil, file: nil, preferences: Preferences.read(), retryItem: item)
     }
@@ -558,7 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Move to Trash")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard AppModal.run({ alert.runModal() }) == .alertFirstButtonReturn else { return }
         do {
             try FileManager.default.trashItem(at: item.folder, resultingItemURL: nil)
             if viewModel.selection == item.id { viewModel.selection = nil }
@@ -610,6 +708,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cancelSetup(message: "Capture setup was cancelled.")
         case .stopping:
             showAlert("Wait for the app to save the audio, then choose Quit.")
+        case .transcribing where viewModel.state.step == .review:
+            quitAfterReview = true
+            keepReviewedAudio()
         case .transcribing:
             showAlert("Wait for transcription to finish before quit. The audio stays saved if transcription fails.")
         case .idle: terminate()
@@ -623,10 +724,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = message
         alert.addButton(withTitle: "Save and quit")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        return AppModal.run { alert.runModal() } == .alertFirstButtonReturn
+    }
+
+    private func controlStatus() -> ControlStatus {
+        let step = viewModel.state.step
+        let capturing = state.canStop
+        let meters = capturing ? recorder?.meters() : nil
+        let microphoneName = capturing ? recorder?.microphoneName : nil
+        var microphone: ControlStatus.Microphone?
+        if let microphoneName, !microphoneName.isEmpty, let meters {
+            microphone = .init(
+                name: microphoneName, hasSignal: meters.microphone.0.hasSignal,
+                silenceSeconds: meters.microphone.1)
+        }
+        var system: ControlStatus.System?
+        if capturing, viewModel.isCall {
+            system = .init(
+                active: recorder?.capturingSystem ?? false, hasSignal: meters?.system?.0.hasSignal ?? false,
+                silenceSeconds: meters?.system?.1 ?? 0)
+        }
+        let kind = viewModel.includesRecording ? (viewModel.isCall ? "call" : "room") : nil
+        let message: String?
+        switch step {
+        case .failed:
+            // Use the existing safe summary, never provider text or localized errors that may contain private paths.
+            message = ItemPresentation.problem(for: viewModel.message).summary
+        case .starting, .recording, .preparing, .review, .uploading, .transcribing: message = step.rawValue
+        case .idle, .saved: message = nil
+        }
+        let uploadBytes: Int64?
+        switch step {
+        case .idle, .starting, .recording, .preparing: uploadBytes = nil
+        default: uploadBytes = viewModel.uploadBytes
+        }
+        return ControlStatus(
+            step: step, kind: step == .idle ? nil : kind,
+            startedAt: state == .recording ? recordingDate?.timeIntervalSince1970 : nil,
+            elapsedSeconds: state == .recording ? viewModel.elapsedSeconds : 0,
+            microphone: microphone, system: system,
+            uploadFraction: step == .uploading ? min(1, max(0, viewModel.fraction)) : nil,
+            needsAttention: modalDepth > 0, message: message,
+            stepStartedAt: step == .idle ? nil : viewModel.stepDate.timeIntervalSince1970,
+            estimatedSeconds: step == .transcribing
+                ? JobProgress.estimateSeconds(durationSeconds: viewModel.durationSeconds) : nil,
+            preparingFraction: step == .preparing ? min(1, max(0, viewModel.fraction)) : nil,
+            durationSeconds: step == .idle ? nil : (viewModel.durationSeconds > 0 ? viewModel.durationSeconds : nil),
+            uploadBytes: uploadBytes,
+            warnings: viewModel.warnings.isEmpty ? nil : viewModel.warnings)
+    }
+
+    private func shouldThrottleControl(_ status: ControlStatus) -> Bool {
+        guard [JobStep.preparing.controlKey, JobStep.uploading.controlKey].contains(status.step) else { return false }
+        guard lastControlStatus?.step == status.step else { return false }
+        guard lastControlStatus?.needsAttention == status.needsAttention else { return false }
+        return ProcessInfo.processInfo.systemUptime - lastControlPublishSeconds < 0.25
+    }
+
+    private func publishStatus(force: Bool = false) {
+        let status = controlStatus()
+        controlServer?.update(status)
+        if !force, status == lastControlStatus { return }
+        if shouldThrottleControl(status) {
+            guard pendingControlPublish == nil else { return }
+            let pending = DispatchWorkItem { [weak self] in
+                self?.pendingControlPublish = nil
+                self?.publishStatus()
+            }
+            pendingControlPublish = pending
+            let delay = max(0, 0.25 - (ProcessInfo.processInfo.systemUptime - lastControlPublishSeconds))
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: pending)
+            return
+        }
+        pendingControlPublish?.cancel()
+        pendingControlPublish = nil
+        lastControlStatus = status
+        lastControlPublishSeconds = ProcessInfo.processInfo.systemUptime
+        controlServer?.publish(status, force: force)
+    }
+
+    private func handleControl(_ command: ControlRequest.Command, completion: ControlServer.Completion) {
+        if let rejection = ControlRequest.rejection(command, step: viewModel.state.step, canStart: state == .idle) {
+            completion(.failure(rejection))
+            return
+        }
+        switch command {
+        case .recordRoom: beginRecording(call: false)
+        case .recordCall: beginRecording(call: true)
+        case .stop: stopRecording()
+        case .transcribe: transcribeReviewedAudio()
+        case .keep: keepReviewedAudio()
+        case .status, .subscribe: break
+        }
+        publishStatus()
+        completion(.success(controlStatus()))
     }
 
     private func terminate() {
+        pendingControlPublish?.cancel()
+        controlServer?.stop()
         authorizedTermination = true
         NSApp.terminate(nil)
     }

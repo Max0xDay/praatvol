@@ -168,7 +168,18 @@ final class Recorder {
     private(set) var folder: URL?
     private var date = Date()
     private var isCall = false
-    private var microphoneName = ""
+    private var resolvedMicrophoneName = ""
+    private var systemCaptureActive = false
+    var microphoneName: String {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return resolvedMicrophoneName
+    }
+    var capturingSystem: Bool {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return systemCaptureActive
+    }
     private let cancellationLock = NSLock()
     private var cancelled = false
     private let meterLock = NSLock()
@@ -204,7 +215,9 @@ final class Recorder {
         do {
             try checkCancellation()
             let device = try AudioDevices.selected(preferences.microphoneIdentifier)
-            microphoneName = device.name
+            meterLock.lock()
+            resolvedMicrophoneName = device.name
+            meterLock.unlock()
             let input = engine.inputNode
             guard let audioUnit = input.audioUnit else {
                 throw PraatvolError("The microphone audio unit is unavailable.")
@@ -239,6 +252,7 @@ final class Recorder {
                 try systemRecorder.start(url: folder.appendingPathComponent("system.caf"))
                 meterLock.lock()
                 systemWriter = systemRecorder.writer
+                systemCaptureActive = true
                 meterLock.unlock()
             }
             try checkCancellation()
@@ -269,6 +283,9 @@ final class Recorder {
         }
         microphoneWriter?.close()
         var warnings = systemRecorder.stop()
+        meterLock.lock()
+        systemCaptureActive = false
+        meterLock.unlock()
         guard let folder, let microphoneWriter else { return nil }
         let microphone = microphoneWriter.snapshot()
         let system = systemRecorder.writer?.snapshot()

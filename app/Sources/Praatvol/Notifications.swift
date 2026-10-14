@@ -11,7 +11,7 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func post(title: String, message: String, file: URL?, failure: Bool = false) {
+    func post(title: String, message: String, file: URL?, failure: Bool = false, alertOnFailure: Bool = true) {
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized else {
                 DispatchQueue.main.async {
@@ -31,7 +31,7 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
                     AppLog.shared.event("notification-post-failed", code: (error as NSError).code)
                     DispatchQueue.main.async {
                         if let file { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-                        showAlert(message, title: title)
+                        if alertOnFailure { showAlert(message, title: title) }
                     }
                 }
             }

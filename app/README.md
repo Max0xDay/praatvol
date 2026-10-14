@@ -162,12 +162,15 @@ Open `transcript.md` with a Markdown editor or a text editor.
 Select **Settings…**.
 The settings affect the next item, not an active item.
 
-- The masked key field stores the OpenRouter key in macOS Keychain.
+- The masked key field stores the OpenRouter key in a private file in the app's Application Support folder.
 - The model field accepts a transcription model identifier.
 - The default model is `elevenlabs/scribe-v2`.
 - The microphone picker lists the system default and available inputs.
 - **Send lossless** sends the archive instead of the AAC copy.
+- **Ask before transcribing** pauses after preparation for a non-modal decision and defaults to off.
 - **Launch at login** uses Service Management for an installed app.
+- **Enable control socket** is on by default and lets the Touch Bar and `praatvolctl` control the app.
+  Turning it off or on takes effect when you save Settings, with no relaunch.
 
 The public OpenRouter models API lacks a reliable list of transcription models.
 The editable model field therefore offers Scribe as a suggestion.
@@ -175,10 +178,13 @@ The app requests ElevenLabs diarization only for model identifiers under `eleven
 Other models can return transcripts without speaker labels.
 
 The app keeps the key out of preferences, logs, transcripts, and audio files.
-The app keeps the key only in Keychain and transient memory.
-Ad-hoc dev builds change signature after each rebuild, which can block access to an earlier build's key.
-If a Keychain read fails, the app explains the failure and asks you to save the key again in Settings.
-Save the key again in Settings to replace an inaccessible Keychain item from an earlier build.
+The release key file is `~/Library/Application Support/praatvol/api-key`.
+The dev key file is `~/Library/Application Support/praatvol-dev/api-key`.
+The directory permits only its owner (0700), and the file permits only its owner (0600).
+Saving replaces the file atomically.
+There is no Keychain migration.
+Enter the key once in Settings.
+The app never reads the macOS Keychain, so macOS never asks for your password.
 Text fields support Command-X, Command-C, Command-V, and Command-A.
 If macOS requires login approval, allow the app under **System Settings > General > Login Items**.
 The app unregisters login access only if a registration exists.
@@ -190,6 +196,99 @@ During recording, confirm **Save and quit** to save audio without a paid request
 During setup, Quit cancels setup.
 Select Quit again after cancellation to close the app.
 During audio preparation or transcription, wait for the current job before Quit.
+During review, Quit keeps the saved audio without a paid request or a confirmation alert.
+
+## Control socket
+
+The running app accepts local commands over a Unix stream socket.
+The release socket is `~/Library/Application Support/praatvol/control.sock`.
+The dev socket is `~/Library/Application Support/praatvol-dev/control.sock`.
+Dev and release can run side by side.
+The directory permits only its owner (0700), and the socket permits only its owner (0600).
+The server also checks the peer user identifier.
+The app removes a stale socket at launch and unlinks its socket on clean quit.
+When **Enable control socket** is off, the app removes the socket and `praatvolctl` exits with status 1 and a "No such file or directory" error.
+There is no network listener.
+
+Use the helper from the repository root:
+
+```bash
+app/scripts/praatvolctl --dev status
+app/scripts/praatvolctl --dev record-room
+app/scripts/praatvolctl --dev stop
+app/scripts/praatvolctl --dev transcribe
+app/scripts/praatvolctl --dev keep
+app/scripts/praatvolctl --dev subscribe
+```
+
+Omit `--dev` for the release app.
+Use `record-call` for microphone and system audio.
+The helper requires Python 3 from the Command Line Tools.
+Press Control-C to end a subscription.
+The helper does not launch the app.
+
+Each request is one UTF-8 JSON object followed by a newline, such as `{"cmd":"status"}`.
+Supported commands are `status`, `subscribe`, `record-room`, `record-call`, `stop`, `transcribe`, and `keep`.
+Lines may contain at most 4096 bytes before the newline.
+The server accepts at most eight connections and disconnects clients whose pending output exceeds 16 KiB.
+Oversized lines close the connection.
+
+Commands other than `subscribe` return one reply and close the connection.
+Success replies have the shape `{"ok":true,"status":{...}}`.
+Error replies have the shape `{"ok":false,"error":"busy","message":"..."}`.
+Error codes are `badRequest`, `busy`, `notRecording`, `notReviewing`, and `denied`.
+Start commands use the same availability rule as the menu.
+A successful start reply shows `starting`, before permissions and capture setup finish.
+Stop during setup cancels setup without a paid request.
+Stop during recording follows the menu action, including the normal transcription request.
+Commands never retry paid requests.
+
+**Ask before transcribing** uses the UserDefaults key `askBeforeTranscribing` and defaults to off.
+With it off, preparation leads straight to transcription and upload warnings remain a notification.
+With it on, stopped recordings, imports, and retries enter `review` after preparation.
+The audio is saved and no paid request has been sent at this point.
+Review has no timeout and never sets `needsAttention` by itself.
+The menu and the main window's **Now** panel offer **Transcribe** and **Keep audio only** without a modal alert.
+A **Ready to transcribe** notification shows duration, upload size, and safe warning summaries without paths.
+Review warnings appear in the snapshot instead of a separate upload-warning notification.
+The `transcribe` command continues to `uploading`, `transcribing`, and `saved`.
+The `keep` command ends as `saved` without a paid request.
+Kept items remain untranscribed in the Library and support **Transcribe Again…**.
+Quit during review acts as `keep` and then closes the app.
+The first decision from the socket, menu, or window wins.
+Both decision commands outside `review`, including a late second decision, return `notReviewing` with "No recording is waiting for a decision."
+Both `record-room` and `record-call` during review return `busy`.
+The `stop` command during review returns `notRecording`.
+
+A subscription returns a bare status snapshot immediately and stays open.
+Snapshots use protocol version `v: 1` and these step keys: `idle`, `starting`, `recording`, `preparing`, `review`, `uploading`, `transcribing`, `saved`, and `failed`.
+The `kind` is `room`, `call`, or null for idle and imported files.
+The `startedAt` field contains Unix seconds during recording and is null otherwise.
+The `elapsedSeconds` field follows the recording timer and is zero otherwise.
+The `microphone` object contains the selected capture device name, `hasSignal`, and `silenceSeconds` once resolved during capture.
+The `system` object is present only during call capture and contains `active`, `hasSignal`, and `silenceSeconds`.
+The `uploadFraction` is between zero and one during upload and null otherwise.
+The `stepStartedAt` field contains Unix seconds when the current step began and is null for idle.
+The `estimatedSeconds` field uses the duration-based estimate during transcription and is null otherwise.
+Preparation has no time estimate.
+The `preparingFraction` field is between zero and one during preparation and is null otherwise.
+It follows the current conversion operation and can restart at zero between operations.
+The `durationSeconds` field contains audio duration during preparation and later steps once measured, and is null when unavailable or idle.
+The `uploadBytes` field contains the selected AAC or lossless audio file size after preparation, not the base64 request size.
+It is available from review or upload onward and is null before then or for idle.
+The `warnings` field contains fixed, short review warning summaries, or null when none.
+Preparation warning details can contain private paths, so review exposes a generic summary instead.
+All optional fields are present with explicit JSON null values when unavailable.
+There is no transcription fraction in the snapshot.
+Clients can derive an estimate from `stepStartedAt` and `estimatedSeconds`.
+The `needsAttention` flag identifies blocking alerts and the file picker.
+The `message` is a step label, the existing safe failure summary, or null.
+Snapshots exclude transcript content, file paths, and keys.
+Subscribers receive step and attention changes, including entry to and exit from review.
+Recording, preparation, review, upload, and transcription also push a snapshot once per second.
+Preparation and upload fraction changes are throttled to at most four pushes per second.
+Recording meter values use the same signal threshold as the main window.
+Settings panels do not set `needsAttention` because they do not block the app.
 
 ## Main window
 
@@ -228,8 +327,8 @@ Calls and rooms use the kind and start time as the generated title, such as **Ro
 Imported files use the file name without the extension.
 Custom names replace the generated title.
 
-The sidebar lists only transcribed items and failed items.
-Unfinished attempts without a transcript or failure stay on disk but do not appear in the sidebar.
+The sidebar lists transcribed items, failed items, and prepared untranscribed items with usable audio and a known duration.
+Incomplete leftovers without a known duration stay on disk but do not appear in the sidebar.
 Select **Show in Finder** at the bottom of the sidebar to open the data root.
 Use Finder to reach unfinished attempts.
 
@@ -239,7 +338,7 @@ Select an item in the sidebar to open the detail view.
 The detail view shows the kind icon, title, full date, and time.
 Select **Open Transcript** to open a completed transcript in the default editor.
 For an item without a transcript, **Transcribe** appears if the item has usable audio and no failure status.
-The sidebar normally hides such items.
+Prepared audio kept after review appears in the sidebar.
 The **⋯** menu offers item actions.
 
 Transcribed items show tiles for **Duration**, **Speakers**, **Words**, and **Cost**.
@@ -249,9 +348,9 @@ Select **Open Full Transcript** to open the complete Markdown file.
 The link appears when the preview reaches 40 lines, even if the transcript has exactly 40 speaker lines.
 
 A failed item shows a box with a plain-language summary and a recommended fix.
-Keychain and missing-key problems offer **Open Settings** as the main fix.
+Key access and missing-key problems offer **Open Settings** as the main fix.
 Other failures offer **Transcribe Again…** if the item has usable audio.
-Keychain and missing-key problems also offer **Transcribe Again…** if the item has usable audio.
+Key access and missing-key problems also offer **Transcribe Again…** if the item has usable audio.
 Timeouts, including **Provider returned 524**, show a timeout summary.
 The app preserves the local audio after a failure.
 
@@ -260,6 +359,7 @@ The app preserves the local audio after a failure.
 Select **Now** to inspect the current job in the detail view.
 The step bar shows **Record**, **Prepare**, **Upload**, **Transcribe**, and **Done**.
 File imports and retries skip **Record**.
+With **Ask before transcribing** enabled, **Review** appears between **Prepare** and **Upload**.
 
 #### Starting
 
@@ -291,6 +391,13 @@ The original copy and some file checks have no measurable fraction.
 The app averages channels and converts the transcript audio to mono at 16 kilohertz (kHz).
 The app aligns call tracks with their first sample timestamps.
 The app limits the mixed peak to 0.95 before the archive stage.
+
+#### Review
+
+With **Ask before transcribing** enabled, the app waits here without a timeout or a paid request.
+The panel shows the audio duration, selected upload size, and any safe warning summaries.
+Select **Transcribe** to continue, or **Keep audio only** to finish without transcription.
+The menu and control socket offer the same decisions.
 
 #### Uploading
 
@@ -349,7 +456,7 @@ Press Delete in the sidebar to request the same confirmed action for the selecte
 ## Library and retry
 
 The library scans the data root at launch, after a job, and when you open the main window.
-The sidebar groups transcribed items and failed items by day, newest first.
+The sidebar groups transcribed, failed, and prepared untranscribed items by day, newest first.
 Each row shows the kind icon, title, and available duration and speaker count.
 The detail view shows transcript statistics or a failure summary.
 
@@ -359,8 +466,8 @@ The library uses these statuses:
 - **Failed** means the item metadata records a failure.
 - **Not transcribed** means the item lacks a transcript and has no failure status.
 
-The sidebar excludes **Not transcribed** items.
-Those item folders stay on disk.
+Prepared **Not transcribed** items with usable audio and a known duration appear in the sidebar.
+Incomplete leftovers stay on disk but remain hidden.
 Use **Show in Finder** at the bottom of the sidebar to reach those folders through the data root.
 
 Select **Open Transcript** in the detail view to open a completed transcript.
@@ -451,7 +558,9 @@ The encoder uses a constant bitrate strategy with these targets:
 | Over 60 minutes, up to 90 minutes | 48 kbps |
 | Over 90 minutes | 32 kbps |
 
-If the duration exceeds 90 minutes, review the timeout warning before approval.
+By default, preparation warnings appear in a notification without an approval prompt.
+Transcription proceeds automatically, including when the duration exceeds 90 minutes.
+Enable **Ask before transcribing** to review the saved audio before any paid request.
 Earlier duration trials used Opus, not AAC.
 Long AAC uploads and AAC quality still require real checks.
 
@@ -473,7 +582,7 @@ Speaker letters identify voices within one request, not real names or identities
 | App name | praatvol Dev | praatvol |
 | Bundle identifier | `com.praatvol.app.dev` | `com.praatvol.app` |
 | Data root | `~/Documents/praatvol-dev/` | `~/Documents/praatvol/` |
-| Keychain service | `com.praatvol.app.dev` | `com.praatvol.app` |
+| Key file | `~/Library/Application Support/praatvol-dev/api-key` | `~/Library/Application Support/praatvol/api-key` |
 | Preferences | Dev bundle domain | Release bundle domain |
 | Icon | Purple wave and D marker | Green wave |
 
@@ -503,7 +612,6 @@ Select an available microphone in Settings.
 If the system track stays silent, start playback.
 Check system audio permission.
 Inspect both raw tracks before another call.
-Select **Keep audio only** at the warning to inspect audio without a paid request.
 
 Stop capture before you change audio devices.
 The app lacks automatic recovery after an output change.
@@ -572,7 +680,7 @@ swift build -Xswiftc -warnings-as-errors
 
 The suite uses Swift Testing and synthetic audio without network requests.
 The suite covers state transitions, progress, estimates, meters, library metadata, retry rules, request bodies, codecs, and raw verification.
-The current suite has 19 tests with 36 cases, including parameter sets.
+The suite also checks private key file permissions, exact contents, missing files, and overwrites.
 The `app/scripts/coverage.sh` script reports the core line coverage and fails below 70%.
 The job and meter tests preceded the corresponding core code.
 The raw compression tests followed the encoder implementation.

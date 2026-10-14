@@ -61,7 +61,12 @@ public enum ItemPresentation {
 
     /// Items worth showing: finished transcripts and failures with a fix. Unfinished leftovers stay on disk only.
     public static func listed(_ items: [LibraryItem]) -> [LibraryItem] {
-        items.filter { $0.status != .notTranscribed }
+        items.filter { isListed($0) }
+    }
+    private static func isListed(_ item: LibraryItem) -> Bool {
+        if item.status != .notTranscribed { return true }
+        guard item.metadata.durationSeconds > 0 else { return false }
+        return item.canRetry
     }
 
     /// The user's name for the item, or the generated title.

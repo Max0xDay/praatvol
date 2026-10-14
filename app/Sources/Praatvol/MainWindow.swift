@@ -12,6 +12,10 @@ final class JobViewModel: ObservableObject {
     @Published var fraction = 0.0
     @Published var elapsedSeconds = 0.0
     @Published var durationSeconds = 0.0
+    @Published var uploadBytes: Int64?
+    @Published var warnings: [String] = []
+    @Published var includesReview = false
+    @Published private(set) var stepDate = Date()
     @Published var sentBytes: Int64 = 0
     @Published var totalBytes: Int64 = 0
     @Published var diskBytes: Int64 = 0
@@ -30,7 +34,10 @@ final class JobViewModel: ObservableObject {
     @Published var renaming: String?
     var identifier = UUID()
     var folder: URL?
+    var stepChanged: () -> Void = {}
     var stop: () -> Void = {}
+    var transcribe: () -> Void = {}
+    var keep: () -> Void = {}
     var retry: (PraatvolCore.LibraryItem) -> Void = { _ in }
     var open: (URL) -> Void = { _ in }
     var recordCall: () -> Void = {}
@@ -54,9 +61,9 @@ final class JobViewModel: ObservableObject {
     }
     /// The steps shown in the step bar. File imports and retries skip the recording step.
     var steps: [JobStep] {
-        includesRecording
-            ? [.recording, .preparing, .uploading, .transcribing, .saved]
-            : [.preparing, .uploading, .transcribing, .saved]
+        var steps: [JobStep] = includesRecording ? [.recording, .preparing] : [.preparing]
+        if includesReview { steps.append(.review) }
+        return steps + [.uploading, .transcribing, .saved]
     }
     var selectedItem: PraatvolCore.LibraryItem? { library.first { $0.id == selection } }
     /// The running job's folder can't be trashed until the job ends.
@@ -73,7 +80,11 @@ final class JobViewModel: ObservableObject {
         guard state.step != step else { return }
         do {
             try state.advance(to: step)
+            stepDate = Date()
+            fraction = 0
+            if step == .transcribing { elapsedSeconds = 0 }
             if step != .failed && step != .idle { lastActiveStep = step }
+            stepChanged()
         } catch {
             AppLog.shared.event("job-transition-failed")
             message = error.localizedDescription
@@ -89,6 +100,9 @@ final class JobViewModel: ObservableObject {
         fraction = 0
         elapsedSeconds = 0
         durationSeconds = 0
+        uploadBytes = nil
+        warnings = []
+        includesReview = false
         sentBytes = 0
         totalBytes = 0
         diskBytes = 0
@@ -689,7 +703,8 @@ private struct LiveView: View {
         switch model.state.step {
         case .recording: return Transcript.timestamp(model.elapsedSeconds)
         case .uploading: return "\(Int(model.fraction * 100))%"
-        case .saved: return "Transcript Ready"
+        case .review: return "Ready to Transcribe"
+        case .saved: return model.summary == nil ? "Audio Saved" : "Transcript Ready"
         case .failed: return "Something Went Wrong"
         case .starting: return "Starting…"
         case .preparing: return "Preparing Audio"
@@ -705,6 +720,22 @@ private struct LiveView: View {
         case .starting: return "Approve any macOS permission prompt"
         case .uploading: return "Uploading \(name)"
         default: return name
+        }
+    }
+
+    private var reviewDetail: some View {
+        VStack(spacing: 14) {
+            Text("\(Transcript.duration(model.durationSeconds)) · \(Style.megabytes(model.uploadBytes ?? 0))")
+                .font(.callout).monospacedDigit()
+            ForEach(model.warnings, id: \.self) { warning in
+                Text(warning).font(.callout).foregroundStyle(.orange).multilineTextAlignment(.center)
+            }
+            HStack {
+                Button("Transcribe", action: model.transcribe)
+                    .buttonStyle(.borderedProminent).tint(Style.brand)
+                Button("Keep audio only", action: model.keep)
+                    .buttonStyle(.bordered)
+            }
         }
     }
 
@@ -731,6 +762,8 @@ private struct LiveView: View {
             ProgressView().controlSize(.small)
         case .preparing:
             ProgressRow(fraction: model.fraction > 0 ? model.fraction : nil, caption: model.message)
+        case .review:
+            reviewDetail
         case .uploading:
             ProgressRow(
                 fraction: model.fraction,
@@ -745,7 +778,7 @@ private struct LiveView: View {
         case .saved:
             VStack(spacing: 14) {
                 if let summary = model.summary { StatsRow(metadata: summary) }
-                if let folder = model.folder {
+                if let folder = model.folder, model.summary != nil {
                     Button {
                         model.open(folder.appendingPathComponent("transcript.md"))
                     } label: {
