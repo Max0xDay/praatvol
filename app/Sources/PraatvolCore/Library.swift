@@ -20,6 +20,7 @@ public struct ItemMetadata: Codable, Equatable, Sendable {
     public var offsetSeconds: Double = 0
     /// A name the user gave the item. Nil shows the generated title.
     public var title: String?
+    public var warnings: [String]?
     public init(date: Date, kind: String, sources: String) {
         self.date = date
         self.kind = kind
@@ -51,10 +52,22 @@ public struct LibraryItem: Identifiable, Sendable {
             return nil
         }
     }
-    public var canRetry: Bool {
-        guard status != .transcribed else { return false }
-        return retrySource != nil
+    public var retryUnavailableReason: String? {
+        guard RecordedAudio.canRetry(status: status, errorMessage: metadata.errorMessage, hasSource: true) else {
+            return metadata.errorMessage == RecordedAudio.noAudioMessage
+                ? RecordedAudio.noAudioMessage : "This item already has a transcript."
+        }
+        guard let source = retrySource else { return "The saved audio is unavailable." }
+        if source.lastPathComponent.hasPrefix("mic.") {
+            do {
+                try AudioFiles.validateRecordedMicrophone(source)
+            } catch {
+                return error.localizedDescription
+            }
+        }
+        return nil
     }
+    public var canRetry: Bool { retryUnavailableReason == nil }
 }
 
 public enum Library {

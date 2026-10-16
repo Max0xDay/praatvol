@@ -87,6 +87,9 @@ Select **Record call (mic + system audio)**.
 Use headphones to prevent duplicate remote voices in the microphone track.
 The app captures all system playback, not only Teams.
 The app leaves audio routing unchanged.
+Calls use **Microphone for calls** from Settings when that input is available, including an explicit built-in microphone choice.
+With no choice, or if the chosen input is unavailable, calls prefer Bluetooth headsets, then the built-in microphone, then other inputs, with virtual and aggregate inputs last.
+The system default input has no special priority.
 
 The app requests microphone permission before capture setup.
 The app starts the microphone before the system tap.
@@ -102,8 +105,21 @@ If the operating system never returns from the call, quit and relaunch the app a
 ### Record room
 
 Select **Record room (mic only)**.
-The app uses the microphone from Settings.
-The app preserves the microphone track before any conversion.
+The app uses the built-in microphone, regardless of Settings or the system default input.
+If no built-in input exists, the app uses the first non-Bluetooth, non-virtual, non-aggregate input.
+If no suitable input exists, setup fails with a clear message.
+The app preserves the microphone track before transcript preparation.
+
+If the active input disappears or stops delivering callbacks for five seconds, the app tries another microphone.
+Room replacements follow the same built-in-first policy and never use Bluetooth, virtual, or aggregate inputs.
+Call replacements follow the same Settings-choice-first, then Bluetooth-first order as call startup, excluding the failed device.
+Each replacement gets up to three seconds to deliver callbacks after capture starts.
+Apple capture calls can block beyond that limit until the operating system returns.
+The item and `mic.caf` stay the same; replacement audio converts to the original track format.
+A silence gap preserves timing against the system track during a switch.
+A successful switch logs `microphone-swapped from=<name> to=<name>` and adds a timestamped warning without an alert.
+Warnings appear in the Now panel, preparation warnings, and `item.json`.
+If no replacement works, the app stops and saves the available audio.
 
 ### Stop recording
 
@@ -165,7 +181,7 @@ The settings affect the next item, not an active item.
 - The masked key field stores the OpenRouter key in a private file in the app's Application Support folder.
 - The model field accepts a transcription model identifier.
 - The default model is `elevenlabs/scribe-v2`.
-- The microphone picker lists the system default and available inputs.
+- **Microphone for calls** lists **Automatic (Bluetooth first)** and available inputs. Calls prefer Bluetooth headsets unless a microphone is chosen; Room always uses the built-in microphone when available.
 - **Send lossless** sends the archive instead of the AAC copy.
 - **Ask before transcribing** pauses after preparation for a non-modal decision and defaults to off.
 - **Launch at login** uses Service Management for an installed app.
@@ -257,7 +273,9 @@ The `keep` command ends as `saved` without a paid request.
 Kept items remain untranscribed in the Library and support **Transcribe Again…**.
 Quit during review acts as `keep` and then closes the app.
 The first decision from the socket, menu, or window wins.
-Both decision commands outside `review`, including a late second decision, return `notReviewing` with "No recording is waiting for a decision."
+Both decision commands outside `review`, including a late second decision, return `notReviewing`.
+The message explains that no recording awaits a decision and empty recordings require a new recording.
+The socket cannot retry library items or transcribe an empty recording.
 Both `record-room` and `record-call` during review return `busy`.
 The `stop` command during review returns `notRecording`.
 
@@ -476,6 +494,10 @@ Select **Show in Finder** from an item menu to reveal the item folder.
 For a failed item with usable audio, select **Transcribe Again…**.
 Confirm **Transcribe again** before the app sends a paid request.
 The app disables retry during another job and for successfully transcribed items.
+A zero-frame or unreadable microphone track fails with “No audio was recorded. The microphone did not deliver sound.”
+The item stores this message instead of a raw Core Audio error.
+Empty microphone recordings have no **Transcribe Again…** action, including in item menus.
+Start a new recording instead; a retry cannot recover missing audio.
 
 Check your OpenRouter account after an ambiguous timeout before another request.
 A failed request can still incur a charge.
@@ -519,7 +541,7 @@ praatvol/
     original.m4a
 ```
 
-`item.json` stores the date, kind, sources, duration, status, error, model, cost, speakers, words, track offset, and optional title.
+`item.json` stores the date, kind, sources, duration, status, error, model, cost, speakers, words, track offset, optional title, and capture warnings.
 `transcript.json` contains the successful raw response.
 `transcript-error.json` contains a failed raw response, including malformed JSON or an error inside a successful protocol response.
 A network failure without a response body cannot produce a raw response file.
@@ -544,7 +566,7 @@ The app keeps partial audio after failures.
 Hidden CAF files can remain after an incomplete conversion.
 Keep those files until you inspect the saved audio.
 
-Logs contain fixed event names and numeric codes, without keys or transcript content.
+Logs contain event names, numeric codes, and selected or replacement microphone names, without keys or transcript content.
 The release log is `~/Library/Logs/praatvol/app.log`.
 The dev log is `~/Library/Logs/praatvol-dev/app.log`.
 
@@ -605,16 +627,18 @@ Apple capture calls can defer cleanup until the permission flow returns.
 
 ### Silent or absent tracks
 
-If microphone callbacks stop for five seconds, the app stops capture and preserves audio.
+If microphone callbacks stop for five seconds or the input disappears, the app tries replacement inputs.
+If none works, the app stops capture and preserves audio.
 Check microphone permission.
-Check **System Settings > Sound > Input**.
-Select an available microphone in Settings.
+For calls, check **System Settings > Sound > Input** or select an available **Microphone for calls** in Settings.
+Room uses the built-in microphone when available and excludes Bluetooth, virtual, and aggregate inputs.
+If no microphone frames arrived, start a new recording; the empty item cannot be retried.
 
 If the system track stays silent, start playback.
 Check system audio permission.
 Inspect both raw tracks before another call.
 
-Stop capture before you change audio devices.
+Stop capture before you change output devices.
 The app lacks automatic recovery after an output change.
 Alignment uses host timestamps but lacks drift correction between device clocks.
 Hardware without host timestamps requires an approximate callback-time fallback.
@@ -695,6 +719,11 @@ Capture, permissions, notifications, and login access require a real desktop ses
 - Confirm the timeout names the required permission.
 - Approve the prompt and confirm cleanup before another capture.
 - Cancel setup and confirm no paid request occurs.
+- Set a Bluetooth microphone as the default and the call preference; confirm Room logs and captures the built-in microphone.
+- Disconnect the active call microphone and confirm capture continues in the same item with a timestamped warning and swap log.
+- Test a stalled input and confirm replacement attempts finish or preserve partial audio without a swap alert.
+- Check a replacement with a different sample rate and channel count; inspect the saved track and call alignment.
+- Check a zero-frame microphone track: confirm the friendly failure, stored error, absent retry actions, and socket refusal.
 - Record a call with headphones and a separate microphone.
 - Confirm both meters, silence warnings, timer, and file size.
 - Confirm the main window opens without a focus change during recording.

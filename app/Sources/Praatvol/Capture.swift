@@ -9,6 +9,8 @@ final class TrackWriter {
     private var file: AVAudioFile?
     private var firstSampleSeconds: Double?
     private var lastSampleSeconds: Double?
+    private var lastFrameEndSeconds: Double?
+    private var resuming = false
     private var failure: Error?
     private var level = AudioLevel.silence
     private var lastSignalSeconds = ProcessInfo.processInfo.systemUptime
@@ -21,19 +23,81 @@ final class TrackWriter {
             commonFormat: format.commonFormat, interleaved: format.isInterleaved)
     }
 
-    func write(_ buffer: AVAudioPCMBuffer, startSeconds: Double) {
+    func write(_ buffer: AVAudioPCMBuffer, startSeconds: Double, converter: AVAudioConverter? = nil) {
         lock.lock()
         defer { lock.unlock() }
         guard failure == nil, let file else { return }
+        guard buffer.frameLength > 0 else { return }
         do {
-            try file.write(from: buffer)
+            if resuming {
+                try writeGap(until: startSeconds, file: file)
+                resuming = false
+            }
+            if let converter {
+                try writeConverted(buffer, converter: converter, file: file)
+            } else {
+                try file.write(from: buffer)
+            }
             level = try AudioLevel.measure(buffer)
             if level.hasSignal { lastSignalSeconds = ProcessInfo.processInfo.systemUptime }
             if firstSampleSeconds == nil { firstSampleSeconds = startSeconds }
             lastSampleSeconds = ProcessInfo.processInfo.systemUptime
+            lastFrameEndSeconds = startSeconds + Double(buffer.frameLength) / buffer.format.sampleRate
         } catch {
             failure = error
             AppLog.shared.event("capture-write-failed", code: (error as NSError).code)
+        }
+    }
+
+    func resume() {
+        lock.lock()
+        resuming = true
+        lock.unlock()
+    }
+
+    private func writeGap(until startSeconds: Double, file: AVAudioFile) throws {
+        guard let lastFrameEndSeconds else { return }
+        var remaining = Int64(max(0, startSeconds - lastFrameEndSeconds) * format.sampleRate)
+        guard remaining > 0 else { return }
+        guard let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
+            throw PraatvolError("Cannot preserve the microphone change gap.")
+        }
+        silence.frameLength = silence.frameCapacity
+        for buffer in UnsafeMutableAudioBufferListPointer(silence.mutableAudioBufferList) {
+            buffer.mData?.initializeMemory(as: UInt8.self, repeating: 0, count: Int(buffer.mDataByteSize))
+        }
+        while remaining > 0 {
+            silence.frameLength = AVAudioFrameCount(min(remaining, 8192))
+            try file.write(from: silence)
+            remaining -= Int64(silence.frameLength)
+        }
+    }
+
+    private func writeConverted(
+        _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, file: AVAudioFile
+    ) throws {
+        let capacity =
+            AVAudioFrameCount(ceil(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate))
+            + 32
+        guard let converted = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
+            throw PraatvolError("Cannot allocate a replacement microphone buffer.")
+        }
+        var supplied = false
+        var status = AVAudioConverterOutputStatus.haveData
+        while status == .haveData {
+            var conversionError: NSError?
+            status = converter.convert(to: converted, error: &conversionError) { _, inputStatus in
+                if supplied {
+                    inputStatus.pointee = .noDataNow
+                    return nil
+                }
+                supplied = true
+                inputStatus.pointee = .haveData
+                return buffer
+            }
+            if let conversionError { throw conversionError }
+            guard status != .error else { throw PraatvolError("Replacement microphone conversion failed.") }
+            if converted.frameLength > 0 { try file.write(from: converted) }
         }
     }
 
@@ -168,7 +232,19 @@ final class Recorder {
     private(set) var folder: URL?
     private var date = Date()
     private var isCall = false
+    private var chosenMicrophoneIdentifier: String?
     private var resolvedMicrophoneName = ""
+    private var activeMicrophone: MicrophoneDevice?
+    private var deviceListChanged = false
+    private var deviceListener: AudioObjectPropertyListenerBlock?
+    private let deviceListenerQueue = DispatchQueue(label: "praatvol.microphone-devices")
+    private var captureWarnings: [String] = []
+
+    var warnings: [String] {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        return captureWarnings
+    }
     private var systemCaptureActive = false
     var microphoneName: String {
         meterLock.lock()
@@ -208,45 +284,33 @@ final class Recorder {
     func start(call: Bool, preferences: Preferences) throws {
         date = Date()
         isCall = call
+        chosenMicrophoneIdentifier = preferences.microphoneIdentifier
         let folder = try Storage.createFolder(root: AppIdentity.root, date: date, kind: call ? "Call" : "Room")
         self.folder = folder
         try Library.save(
             ItemMetadata(date: date, kind: call ? "Call" : "Room", sources: "Capture setup"), folder: folder)
         do {
             try checkCancellation()
-            let device = try AudioDevices.selected(preferences.microphoneIdentifier)
-            meterLock.lock()
-            resolvedMicrophoneName = device.name
-            meterLock.unlock()
-            let input = engine.inputNode
-            guard let audioUnit = input.audioUnit else {
-                throw PraatvolError("The microphone audio unit is unavailable.")
+            let device: MicrophoneDevice
+            if call {
+                guard
+                    let callMicrophone = try AudioDevices.candidates(
+                        call: true, chosenIdentifier: chosenMicrophoneIdentifier
+                    ).first
+                else {
+                    throw PraatvolError("No call microphone is available. Connect a microphone and try again.")
+                }
+                device = callMicrophone
+            } else {
+                guard let builtInOrWired = try AudioDevices.candidates(call: false).first else {
+                    throw PraatvolError(
+                        "No suitable room microphone is available. Connect a wired microphone or use the built-in microphone."
+                    )
+                }
+                device = builtInOrWired
             }
-            var identifier = device.identifier
-            try checkStatus(
-                AudioUnitSetProperty(
-                    audioUnit, kAudioOutputUnitProperty_CurrentDevice,
-                    kAudioUnitScope_Global, 0, &identifier, UInt32(MemoryLayout<AudioDeviceID>.size)),
-                "Select microphone")
-            let format = input.outputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else { throw PraatvolError(Self.microphoneHelp) }
-            let writer = try TrackWriter(url: folder.appendingPathComponent("mic.caf"), format: format)
-            meterLock.lock()
-            microphoneWriter = writer
-            meterLock.unlock()
-            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
-                // #COMPLETION_DRIVE: Without host time, the microphone callback arrives at the buffer's end.
-                // #SUGGEST_VERIFY: Compare alignment with a known simultaneous sound in both tracks.
-                let start =
-                    time.isHostTimeValid
-                    ? AVAudioTime.seconds(forHostTime: time.hostTime)
-                    : ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / buffer.format.sampleRate
-                writer.write(buffer, startSeconds: start)
-            }
-            installedTap = true
-            engine.prepare()
-            try checkCancellation()
-            try engine.start()
+            try startMicrophone(device, folder: folder)
+            try listenForDeviceChanges()
             try checkCancellation()
             if call {
                 try systemRecorder.start(url: folder.appendingPathComponent("system.caf"))
@@ -263,26 +327,181 @@ final class Recorder {
         }
     }
 
+    private func startMicrophone(_ device: MicrophoneDevice, folder: URL) throws {
+        let input = engine.inputNode
+        guard let audioUnit = input.audioUnit else {
+            throw PraatvolError("The microphone audio unit is unavailable.")
+        }
+        var identifier = device.identifier
+        try checkStatus(
+            AudioUnitSetProperty(
+                audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global, 0, &identifier, UInt32(MemoryLayout<AudioDeviceID>.size)),
+            "Select microphone")
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw PraatvolError(Self.microphoneHelp) }
+        let writer = try microphoneWriter ?? TrackWriter(url: folder.appendingPathComponent("mic.caf"), format: format)
+        let converter: AVAudioConverter?
+        if format == writer.format {
+            converter = nil
+        } else {
+            guard let replacementConverter = AVAudioConverter(from: format, to: writer.format) else {
+                throw PraatvolError("The replacement microphone format cannot be converted.")
+            }
+            converter = replacementConverter
+        }
+        if microphoneWriter != nil { writer.resume() }
+        meterLock.lock()
+        microphoneWriter = writer
+        resolvedMicrophoneName = device.name
+        activeMicrophone = device
+        meterLock.unlock()
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
+            // #COMPLETION_DRIVE: Without host time, the microphone callback arrives at the buffer's end.
+            // #SUGGEST_VERIFY: Compare alignment with a known simultaneous sound in both tracks.
+            let start =
+                time.isHostTimeValid
+                ? AVAudioTime.seconds(forHostTime: time.hostTime)
+                : ProcessInfo.processInfo.systemUptime - Double(buffer.frameLength) / buffer.format.sampleRate
+            writer.write(buffer, startSeconds: start, converter: converter)
+        }
+        installedTap = true
+        engine.prepare()
+        try checkCancellation()
+        try engine.start()
+        AppLog.shared.event("microphone-selected name=\(device.name)")
+    }
+
+    private static var devicesAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+    }
+
+    private func listenForDeviceChanges() throws {
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            self.meterLock.lock()
+            self.deviceListChanged = true
+            self.meterLock.unlock()
+        }
+        var address = Self.devicesAddress
+        try checkStatus(
+            AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &address, deviceListenerQueue, listener),
+            "Watch microphone devices")
+        deviceListener = listener
+    }
+
+    private func stopMicrophoneEngine() {
+        engine.stop()
+        if installedTap {
+            engine.inputNode.removeTap(onBus: 0)
+            installedTap = false
+        }
+    }
+
+    func recoverMicrophoneIfNeeded() -> Bool {
+        meterLock.lock()
+        let listChanged = deviceListChanged
+        deviceListChanged = false
+        let previous = activeMicrophone
+        meterLock.unlock()
+        do {
+            let devices = try AudioDevices.microphones()
+            let present = devices.contains { $0.uniqueIdentifier == previous?.uniqueIdentifier }
+            if present, !microphoneProblem() { return true }
+            guard let previous, let folder else { return false }
+            AppLog.shared.event(listChanged ? "microphone-disconnected" : "microphone-stalled")
+            let candidates = try AudioDevices.candidates(
+                call: isCall, chosenIdentifier: chosenMicrophoneIdentifier, excluding: previous.uniqueIdentifier)
+            stopMicrophoneEngine()
+            for candidate in candidates {
+                try checkCancellation()
+                engine = AVAudioEngine()
+                do {
+                    let attemptStarted = ProcessInfo.processInfo.systemUptime
+                    try startMicrophone(candidate, folder: folder)
+                    if try waitForMicrophone(since: attemptStarted) {
+                        recordSwap(from: previous.name, to: candidate.name)
+                        return true
+                    }
+                    AppLog.shared.event("microphone-replacement-stalled")
+                } catch {
+                    AppLog.shared.event("microphone-replacement-failed", code: (error as NSError).code)
+                }
+                stopMicrophoneEngine()
+            }
+        } catch {
+            AppLog.shared.event("microphone-recovery-failed", code: (error as NSError).code)
+        }
+        meterLock.lock()
+        captureWarnings.append("No replacement microphone was available. The partial audio stays saved.")
+        meterLock.unlock()
+        return false
+    }
+
+    private func waitForMicrophone(since attemptStarted: Double) throws -> Bool {
+        // #COMPLETION_DRIVE: A first callback within three seconds establishes a working replacement input.
+        // #SUGGEST_VERIFY: Disconnect wired and Bluetooth inputs on hardware; Apple start calls cannot be interrupted.
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            try checkCancellation()
+            let snapshot = microphoneWriter?.snapshot()
+            if snapshot?.error != nil { return false }
+            if let last = snapshot?.last, last > attemptStarted { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return false
+    }
+
+    private func recordSwap(from previous: String, to replacement: String) {
+        let elapsed = Transcript.timestamp(Date().timeIntervalSince(date))
+        let warning = "Microphone changed from \(previous) to \(replacement) at \(elapsed)"
+        meterLock.lock()
+        captureWarnings.append(warning)
+        meterLock.unlock()
+        AppLog.shared.event("microphone-swapped from=\(previous) to=\(replacement)")
+        guard let folder else { return }
+        do {
+            var metadata = try Library.load(folder: folder)
+            metadata.warnings = warnings
+            try Library.save(metadata, folder: folder)
+        } catch {
+            AppLog.shared.event("microphone-warning-save-failed", code: (error as NSError).code)
+        }
+    }
+
     static let microphoneHelp =
         "No microphone audio arrived. Allow access in System Settings > Privacy & Security > Microphone. Check Sound > Input, then relaunch the app. The raw audio stays saved."
     static let systemHelp =
         "The system track is silent or empty. Start playback and allow access in System Settings > Privacy & Security > Screen & System Audio Recording (or System Audio Recording), then relaunch the app. The microphone track stays saved."
 
     func microphoneProblem() -> Bool {
+        meterLock.lock()
+        defer { meterLock.unlock() }
+        if deviceListChanged { return true }
         guard let snapshot = microphoneWriter?.snapshot() else { return true }
         if snapshot.error != nil { return true }
         guard let last = snapshot.last else { return true }
         return ProcessInfo.processInfo.systemUptime - last > 5
     }
 
-    func stop() -> CapturedItem? {
-        engine.stop()
-        if installedTap {
-            engine.inputNode.removeTap(onBus: 0)
-            installedTap = false
+    private func removeDeviceListener() {
+        if let deviceListener {
+            var address = Self.devicesAddress
+            let status = AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &address, deviceListenerQueue, deviceListener)
+            if status != noErr { AppLog.shared.event("microphone-listener-removal-failed", code: Int(status)) }
+            self.deviceListener = nil
         }
+    }
+
+    func stop() -> CapturedItem? {
+        removeDeviceListener()
+        stopMicrophoneEngine()
         microphoneWriter?.close()
-        var warnings = systemRecorder.stop()
+        var warnings = self.warnings + systemRecorder.stop()
         meterLock.lock()
         systemCaptureActive = false
         meterLock.unlock()
@@ -320,6 +539,7 @@ final class Recorder {
             var metadata = try Library.load(folder: folder)
             metadata.sources = sources
             metadata.offsetSeconds = offset
+            metadata.warnings = warnings
             try Library.save(metadata, folder: folder)
         } catch {
             AppLog.shared.event("capture-metadata-failed", code: (error as NSError).code)

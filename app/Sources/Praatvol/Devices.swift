@@ -11,6 +11,19 @@ struct MicrophoneDevice {
     let identifier: AudioDeviceID
     let uniqueIdentifier: String
     let name: String
+    let transportType: UInt32
+
+    var descriptor: MicrophoneDescriptor {
+        let transport: MicrophoneTransport
+        switch transportType {
+        case kAudioDeviceTransportTypeBuiltIn: transport = .builtIn
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: transport = .bluetooth
+        case kAudioDeviceTransportTypeVirtual: transport = .virtual
+        case kAudioDeviceTransportTypeAggregate: transport = .aggregate
+        default: transport = .other
+        }
+        return MicrophoneDescriptor(identifier: uniqueIdentifier, name: name, transport: transport)
+    }
 }
 
 enum AudioDevices {
@@ -39,17 +52,26 @@ enum AudioDevices {
         try checkStatus(AudioObjectGetPropertyData(system, &address, 0, nil, &size, &identifiers), "Read audio devices")
         var microphones: [MicrophoneDevice] = []
         for identifier in identifiers {
-            if try hasInput(identifier) {
-                var name: CFString = "" as CFString
-                var uniqueIdentifier: CFString = "" as CFString
-                try property(identifier, selector: kAudioObjectPropertyName, value: &name)
-                try property(identifier, selector: kAudioDevicePropertyDeviceUID, value: &uniqueIdentifier)
-                microphones.append(
-                    MicrophoneDevice(
-                        identifier: identifier, uniqueIdentifier: uniqueIdentifier as String, name: name as String))
+            do {
+                if let microphone = try microphone(identifier) { microphones.append(microphone) }
+            } catch {
+                AppLog.shared.event("microphone-device-read-failed", code: (error as NSError).code)
             }
         }
         return microphones
+    }
+
+    private static func microphone(_ identifier: AudioDeviceID) throws -> MicrophoneDevice? {
+        guard try hasInput(identifier) else { return nil }
+        var name: CFString = "" as CFString
+        var uniqueIdentifier: CFString = "" as CFString
+        try property(identifier, selector: kAudioObjectPropertyName, value: &name)
+        try property(identifier, selector: kAudioDevicePropertyDeviceUID, value: &uniqueIdentifier)
+        var transportType: UInt32 = 0
+        try property(identifier, selector: kAudioDevicePropertyTransportType, value: &transportType)
+        return MicrophoneDevice(
+            identifier: identifier, uniqueIdentifier: uniqueIdentifier as String, name: name as String,
+            transportType: transportType)
     }
 
     private static func hasInput(_ identifier: AudioDeviceID) throws -> Bool {
@@ -67,21 +89,13 @@ enum AudioDevices {
         return buffers.contains { $0.mNumberChannels > 0 }
     }
 
-    static func selected(_ uniqueIdentifier: String) throws -> MicrophoneDevice {
+    static func candidates(
+        call: Bool, chosenIdentifier: String? = nil, excluding identifier: String? = nil
+    ) throws -> [MicrophoneDevice] {
         let devices = try microphones()
-        if !uniqueIdentifier.isEmpty {
-            guard let device = devices.first(where: { $0.uniqueIdentifier == uniqueIdentifier }) else {
-                throw PraatvolError("The selected microphone is unavailable. Choose an input in Settings.")
-            }
-            return device
-        }
-        var identifier = AudioDeviceID(kAudioObjectUnknown)
-        try property(
-            AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultInputDevice,
-            value: &identifier)
-        guard let device = devices.first(where: { $0.identifier == identifier }) else {
-            throw PraatvolError("No default microphone exists. Select an input in System Settings > Sound > Input.")
-        }
-        return device
+        let ordered = MicrophonePolicy.candidates(
+            devices.map(\.descriptor), call: call, chosenIdentifier: chosenIdentifier, excluding: identifier)
+        return ordered.compactMap { descriptor in devices.first { $0.uniqueIdentifier == descriptor.identifier } }
     }
+
 }

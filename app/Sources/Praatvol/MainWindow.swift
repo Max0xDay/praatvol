@@ -757,6 +757,9 @@ private struct LiveView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
+                ForEach(model.warnings, id: \.self) { warning in
+                    Text(warning).font(.callout).foregroundStyle(.orange).multilineTextAlignment(.center)
+                }
             }
         case .starting:
             ProgressView().controlSize(.small)

@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = SettingsWindow()
     private let notifications = Notifications()
     private let captureQueue = DispatchQueue(label: "praatvol.capture")
+    private var microphoneRecoveryInProgress = false
     private let libraryQueue = DispatchQueue(label: "praatvol.library", qos: .utility)
     private var recorder: Recorder?
     private var recordingDate: Date?
@@ -329,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func tick() {
         if let recorder, state == .recording {
             let meters = recorder.meters()
+            viewModel.warnings = recorder.warnings
             viewModel.microphoneLevel = meters.microphone.0
             viewModel.microphoneSilenceSeconds = meters.microphone.1
             viewModel.systemLevel = meters.system?.0 ?? .silence
@@ -347,16 +349,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard state == .recording, let recordingDate else { return }
         if Date().timeIntervalSince(recordingDate) > 5 {
-            if recorder?.microphoneProblem() == true {
-                AppLog.shared.event("microphone-stalled")
-                stopRecording()
-                if recordingOrigin == .menu {
-                    showAlert(Recorder.microphoneHelp)
-                } else {
-                    notifications.post(
-                        title: "Recording failed", message: Recorder.microphoneHelp, file: nil, failure: true,
-                        allowAutomaticPresentation: false)
-                }
+            if recorder?.microphoneProblem() == true { recoverMicrophone() }
+        }
+    }
+
+    private func recoverMicrophone() {
+        guard !microphoneRecoveryInProgress, let recorder else { return }
+        microphoneRecoveryInProgress = true
+        captureQueue.async {
+            let recovered = recorder.recoverMicrophoneIfNeeded()
+            DispatchQueue.main.async {
+                self.microphoneRecoveryInProgress = false
+                guard self.state == .recording, self.recorder === recorder else { return }
+                self.viewModel.warnings = recorder.warnings
+                if !recovered { self.stopRecording() }
             }
         }
     }
@@ -371,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func finishCapture(quitAfterSave: Bool) {
         guard state == .recording, let recorder else { return }
+        recorder.cancelStart()
         timer?.invalidate()
         timer = nil
         state = .stopping
@@ -471,13 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     metadata.errorMessage = nil
                     try Library.save(metadata, folder: itemFolder)
                 }
-                let durationSource = capture?.microphone ?? file ?? retryItem?.retrySource
-                if let durationSource {
-                    viewModel.durationSeconds = try await Task.detached {
-                        try AudioFiles.duration(durationSource)
-                    }.value
-                    publishStatus()
-                }
+                try await updatePreparationDuration(capture: capture, file: file, retryItem: retryItem)
                 let prepared = try await Task.detached {
                     if let capture { return try TranscriptionJob.prepare(capture: capture, report: report) }
                     if let retryItem { return try TranscriptionJob.prepareRetry(item: retryItem, report: report) }
@@ -497,6 +498,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             finishJob()
         }
+    }
+
+    @MainActor private func updatePreparationDuration(
+        capture: CapturedItem?, file: URL?, retryItem: PraatvolCore.LibraryItem?
+    ) async throws {
+        let durationSource = capture?.microphone ?? file ?? retryItem?.retrySource
+        guard let durationSource else { return }
+        viewModel.durationSeconds = try await Task.detached {
+            if let capture { try AudioFiles.validateRecordedMicrophone(capture.microphone) }
+            if let retryItem, let reason = retryItem.retryUnavailableReason { throw PraatvolError(reason) }
+            return try AudioFiles.duration(durationSource)
+        }.value
+        publishStatus()
     }
 
     private func startJobTimer() {
