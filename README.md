@@ -76,13 +76,17 @@ See [the app guide](app/README.md) for Gatekeeper steps, permissions, settings, 
 - The start watchdog reports permission errors without a blocked interface.
 - Cancel remains available throughout capture setup.
 - A call uses the microphone and an in-process tap through Core Audio.
-- A room uses only the microphone.
+- Calls use the available microphone chosen in Settings; otherwise Bluetooth comes first, then built-in, then other inputs, with virtual and aggregate inputs last.
+- Call microphone replacements follow the same order, excluding the failed input; the system default has no special priority.
+- A room uses the built-in microphone, regardless of the call microphone setting or system default.
+- If no built-in input exists, rooms use a wired input; Bluetooth, virtual, and aggregate inputs are excluded.
+- If a microphone disappears or stalls, the app tries another input in the same recording and saves a warning.
 - The app supports separate devices for input and output without virtual drivers.
 - The app keeps separate raw tracks and a lossless archive.
 - Advanced Audio Coding (AAC) uploads use duration-based target bitrates in an MPEG-4 Audio (M4A) file.
 - Small files can use lossless uploads instead.
 - The app sends one paid request through OpenRouter and never retries automatically.
-- Settings store the key in a private file in the app's Application Support folder and offer a model field and a microphone picker.
+- Settings store the key in a private file in the app's Application Support folder and offer a model field and a microphone picker for calls.
 - The app never uses the macOS Keychain, so rebuilds do not ask for your password.
 - A completion notification opens the transcript when you click the notification.
 - Each dated folder contains Markdown transcripts and raw JavaScript Object Notation (JSON) responses.
@@ -117,7 +121,11 @@ Earlier duration trials used Opus; long AAC requests and AAC quality still requi
 The app guards the full base64 request body at 50,000,000 bytes.
 The app preserves local audio after a failure.
 
-Stop capture before you change audio devices.
+Microphone recovery keeps the same item and raw track, converting replacement inputs to the track's format.
+A short silence preserves call alignment during the change.
+If no replacement delivers audio, the app stops and saves the partial recording.
+An empty microphone track reports “No audio was recorded” and cannot be transcribed again.
+Stop capture before you change output devices.
 The app lacks automatic recovery for output changes and drift correction between device clocks.
 See [the app guide](app/README.md#manual-test-checklist) for the manual checklist.
 See [the limits experiment](experiments/limits-test/README.md) for the earlier request trials.

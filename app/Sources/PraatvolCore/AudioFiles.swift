@@ -11,6 +11,19 @@ public struct Archive {
 }
 
 public enum AudioFiles {
+    public static func validateRecordedMicrophone(_ url: URL) throws {
+        let frameCount: Int64?
+        do {
+            frameCount = try AVAudioFile(forReading: url).length
+        } catch {
+            NSLog("praatvol: microphone audio unreadable (code %ld)", (error as NSError).code)
+            throw PraatvolError(RecordedAudio.noAudioMessage)
+        }
+        if let message = RecordedAudio.failureMessage(frameCount: frameCount) {
+            throw PraatvolError(message)
+        }
+    }
+
     public static func duration(_ url: URL) throws -> Double {
         let file = try AVAudioFile(forReading: url)
         return Double(file.length) / file.processingFormat.sampleRate

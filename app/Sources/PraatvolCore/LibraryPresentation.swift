@@ -131,6 +131,17 @@ public enum ItemPresentation {
     /// Turns a stored error message into a short summary and the one action that fixes it.
     public static func problem(for message: String) -> Problem {
         let lowered = message.lowercased()
+        if message == RecordedAudio.noAudioMessage {
+            return Problem(
+                summary: "No audio was recorded.",
+                detail: "The microphone did not deliver sound. Start a new recording.", action: .retry)
+        }
+        if lowered.contains("coreaudio") || lowered.contains("core audio") {
+            return Problem(
+                summary: "The saved audio could not be read.",
+                detail: "The audio format may be unsupported or the recording incomplete. Check the saved audio.",
+                action: .retry)
+        }
         if lowered.contains("keychain") {
             return Problem(
                 summary: "praatvol couldn't read your OpenRouter key.",

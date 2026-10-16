@@ -225,7 +225,15 @@ final class ControlServer: @unchecked Sendable {
         case .success(let status):
             send(Reply(ok: true, status: status, error: nil, message: nil), to: connection)
         case .failure(let error):
-            send(Reply(ok: false, status: nil, error: error.rawValue, message: error.message), to: connection)
+            let message: String
+            if error == .notReviewing {
+                message =
+                    error.message
+                    + " Transcribe only applies to audio awaiting review. Empty recordings require a new recording."
+            } else {
+                message = error.message
+            }
+            send(Reply(ok: false, status: nil, error: error.rawValue, message: message), to: connection)
         }
     }
 

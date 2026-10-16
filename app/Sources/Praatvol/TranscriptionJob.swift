@@ -49,6 +49,7 @@ final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked
 enum TranscriptionJob {
     static func prepare(capture: CapturedItem, report: @escaping JobReporter) throws -> PreparedItem {
         let folder = capture.folder
+        try AudioFiles.validateRecordedMicrophone(capture.microphone)
         var warnings = capture.warnings
         let microphone = compressTrack(capture.microphone, warnings: &warnings, report: report)
         let microphoneMono = folder.appendingPathComponent(".mic-mono.caf")
@@ -88,6 +89,7 @@ enum TranscriptionJob {
 
     static func prepareRetry(item: LibraryItem, report: @escaping JobReporter) throws -> PreparedItem {
         let folder = item.folder
+        if let reason = item.retryUnavailableReason { throw PraatvolError(reason) }
         guard let source = item.retrySource else { throw PraatvolError("The saved audio is unavailable.") }
         if isSavedArchive(source) {
             let durationSeconds = try AudioFiles.duration(source)

@@ -28,6 +28,14 @@
 
 ### Fixes
 
+- Calls prefer Bluetooth headsets, then built-in and other inputs, with virtual and aggregate inputs last, unless an available microphone is explicitly chosen in Settings.
+- Call startup and microphone replacement use the same order, excluding the failed input during replacement; the system default no longer has special priority. Room behavior is unchanged.
+- Room recordings prefer the built-in microphone and exclude Bluetooth, virtual, and aggregate inputs, regardless of the call microphone setting.
+- Settings labels the microphone picker **Microphone for calls** and explains the Room policy.
+- Missing or stalled microphone inputs trigger replacement attempts within the same item and raw track, with format conversion and a timing gap.
+- Successful microphone changes add a timestamped non-modal warning and a swap log; capture stops only when no replacement works.
+- Empty or unreadable microphone tracks show a plain-language failure and cannot be retried from the Library or control socket.
+- Unknown Core Audio failures show a short friendly summary instead of raw error codes in the Library.
 - Socket-started recordings stay in the background while still sending review, completion, and failure notifications.
 - The sidebar excludes incomplete leftovers without a known duration but includes prepared untranscribed audio for manual retry.
 - By default, preparation warnings appear once as a notification instead of a blocking review alert, and transcription proceeds automatically.

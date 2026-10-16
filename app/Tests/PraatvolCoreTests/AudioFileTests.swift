@@ -32,6 +32,33 @@ private func measuredBitrate(_ url: URL) throws -> UInt32 {
     return bitrate
 }
 
+@Test func recordedMicrophoneValidation() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer {
+        do { try FileManager.default.removeItem(at: folder) } catch {
+            Issue.record("Cannot remove test audio: \(error)")
+        }
+    }
+    let source = folder.appendingPathComponent("mic.caf")
+    let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1))
+    do { _ = try AVAudioFile(forWriting: source, settings: format.settings) }
+    #expect(throws: PraatvolError.self) { try AudioFiles.validateRecordedMicrophone(source) }
+    var metadata = ItemMetadata(date: Date(), kind: "Room", sources: "mic")
+    metadata.status = .failed
+    let emptyItem = LibraryItem(folder: folder, metadata: metadata)
+    #expect(!emptyItem.canRetry)
+    #expect(emptyItem.retryUnavailableReason == RecordedAudio.noAudioMessage)
+    try Data(repeating: 0, count: 4096).write(to: source)
+    #expect(throws: PraatvolError.self) { try AudioFiles.validateRecordedMicrophone(source) }
+    #expect(!emptyItem.canRetry)
+    try writeTone(source)
+    try AudioFiles.validateRecordedMicrophone(source)
+    #expect(emptyItem.canRetry)
+    metadata.errorMessage = RecordedAudio.noAudioMessage
+    #expect(!LibraryItem(folder: folder, metadata: metadata).canRetry)
+}
+
 @Test func appleCodecsAndStreamingMix() throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

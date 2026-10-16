@@ -30,7 +30,7 @@ final class SettingsWindow: NSObject {
             model.isEditable = true
             model.stringValue = preferences.model
             microphone.removeAllItems()
-            microphone.addItem(withTitle: "System default")
+            microphone.addItem(withTitle: "Automatic (Bluetooth first)")
             for device in devices { microphone.addItem(withTitle: device.name) }
             let selected = devices.firstIndex { $0.uniqueIdentifier == preferences.microphoneIdentifier }
             microphone.selectItem(at: selected.map { $0 + 1 } ?? 0)
@@ -52,7 +52,7 @@ final class SettingsWindow: NSObject {
 
     private func createWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 440),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "\(AppIdentity.name) Settings"
         window.isReleasedWhenClosed = false
@@ -65,7 +65,12 @@ final class SettingsWindow: NSObject {
         )
         let stack = NSStackView(views: [
             row("OpenRouter API key", apiKey), row("Model", model),
-            row("Microphone", microphone), lossless, askBeforeTranscribing, launchAtLogin, controlSocket, note, save,
+            row("Microphone for calls", microphone),
+            NSTextField(
+                wrappingLabelWithString:
+                    "Calls prefer Bluetooth headsets unless you choose a microphone. Room always uses the built-in microphone, or a wired input if unavailable."
+            ),
+            lossless, askBeforeTranscribing, launchAtLogin, controlSocket, note, save,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
