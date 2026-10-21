@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installEditMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         notifications.configure()
+        LoginItems.verifyAtLaunch()
+        settings.notifyLoginStatus = { [weak self] message in
+            self?.notifications.post(
+                title: "Launch at login", message: message, file: nil, alertOnFailure: false,
+                allowAutomaticPresentation: false)
+        }
         mainWindow = MainWindow(model: viewModel)
         viewModel.stop = { [weak self] in self?.stopRecording() }
         viewModel.transcribe = { [weak self] in self?.transcribeReviewedAudio() }
@@ -282,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.recordingDate = Date()
                     self.viewModel.advance(.recording)
                     self.viewModel.folder = recorder.folder
+                    if recorder.hasMicrophoneFailed { self.notifyMicrophoneFailure(recorder) }
                     self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                         self?.tick()
                     }
@@ -362,9 +369,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.microphoneRecoveryInProgress = false
                 guard self.state == .recording, self.recorder === recorder else { return }
                 self.viewModel.warnings = recorder.warnings
-                if !recovered { self.stopRecording() }
+                if !recovered {
+                    self.notifyMicrophoneFailure(recorder)
+                    if !recorder.capturingSystem { self.stopRecording() }
+                }
             }
         }
+    }
+
+    private func notifyMicrophoneFailure(_ recorder: Recorder) {
+        notifications.post(
+            title: "Microphone unavailable",
+            message: recorder.capturingSystem
+                ? "Recording continues with system audio only. Your microphone is not being recorded."
+                : "The microphone could not restart. Available audio will be saved.",
+            file: nil, failure: true, allowAutomaticPresentation: false)
     }
 
     @objc private func stopRecording() {

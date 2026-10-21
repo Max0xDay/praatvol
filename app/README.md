@@ -4,7 +4,7 @@ praatvol is a native macOS app for room recordings, calls, and audio files.
 The app uses Apple frameworks and OpenRouter for batch transcription with speaker labels.
 The app requires macOS 14.2 or later on Apple Silicon.
 The app requires no Python, virtual drivers, or local models.
-Version 0.1.0 is an early release.
+Version 0.2.2 is an early release.
 
 ## Build and install
 
@@ -34,7 +34,7 @@ app/scripts/build.sh release
 
 Drag `app/dist/praatvol.app` into `/Applications`.
 Open `/Applications/praatvol.app` through Finder.
-The release script also creates `app/dist/praatvol-0.1.0.dmg` and `app/dist/praatvol-0.1.0.zip`.
+The release script also creates `app/dist/praatvol-0.2.2.dmg` and `app/dist/praatvol-0.2.2.zip`.
 The file `app/VERSION` supplies the bundle version.
 
 The scripts use Swift Package Manager (SwiftPM) and Swift 6 from the Command Line Tools.
@@ -102,6 +102,23 @@ The watchdog cancels the job without a blocked interface.
 The capture queue removes the tap and private device after the blocked call returns.
 If the operating system never returns from the call, quit and relaunch the app after permission approval.
 
+Bluetooth headsets can switch to a lower-rate mono format when their microphone opens.
+Before installing a microphone tap, the app waits up to three seconds for matching, nonzero hardware and node formats.
+The formats must remain unchanged for at least 300 milliseconds.
+A small Objective-C guard rechecks the formats and catches AVFoundation exceptions during tap installation and engine start.
+Swift handles the returned error without an uncaught Objective-C exception terminating the app.
+If the call microphone cannot start, the call continues with system audio only and a non-modal notification.
+Allow notifications to see the warning; denied notification permission never opens an alert or Finder for this failure.
+
+The private system aggregate contains only the global stereo process tap, with tap drift compensation enabled.
+It contains no physical output subdevice, output device identifier, or hardware clock binding.
+The tap is unmuted and does not change the default output or its stream format.
+Tap auto-start waiting is disabled so capture startup does not wait for a tapped application to begin playback.
+Default-output, output stream-format, and output sample-rate changes produce content-free log events.
+The app leaves the device-independent tap running through these changes rather than rebinding the headset.
+This is a conservative policy, not a verified fix for the Teams Bluetooth speaker warning.
+Soundcore Space One profile switches and mid-call output changes still need hardware verification.
+
 ### Record room
 
 Select **Record room (mic only)**.
@@ -112,14 +129,19 @@ The app preserves the microphone track before transcript preparation.
 
 If the active input disappears or stops delivering callbacks for five seconds, the app tries another microphone.
 Room replacements follow the same built-in-first policy and never use Bluetooth, virtual, or aggregate inputs.
-Call replacements follow the same Settings-choice-first, then Bluetooth-first order as call startup, excluding the failed device.
-Each replacement gets up to three seconds to deliver callbacks after capture starts.
+If the same input remains available, recovery first retries its current device identifier to accommodate a profile switch.
+Other call replacements follow the Settings-choice-first, then Bluetooth-first order, excluding the failed input.
+Recovery makes at most three attempts in total.
+Each attempt gets up to three seconds for its format to settle, then three seconds to deliver callbacks after capture starts.
 Apple capture calls can block beyond that limit until the operating system returns.
 The item and `mic.caf` stay the same; replacement audio converts to the original track format.
 A silence gap preserves timing against the system track during a switch.
 A successful switch logs `microphone-swapped from=<name> to=<name>` and adds a timestamped warning without an alert.
 Warnings appear in the Now panel, preparation warnings, and `item.json`.
-If no replacement works, the app stops and saves the available audio.
+If no replacement works, the app logs `microphone-failed`, saves a failure warning in `item.json`, and posts a non-modal notification.
+A call keeps recording its system track without further microphone retries; a room recording stops and saves available audio.
+If the microphone never supplied frames, the surviving system track becomes the sole preparation source.
+The existing preparation and transcription flow then processes that track without mixing an empty microphone file.
 
 ### Stop recording
 
@@ -184,7 +206,9 @@ The settings affect the next item, not an active item.
 - **Microphone for calls** lists **Automatic (Bluetooth first)** and available inputs. Calls prefer Bluetooth headsets unless a microphone is chosen; Room always uses the built-in microphone when available.
 - **Send lossless** sends the archive instead of the AAC copy.
 - **Ask before transcribing** pauses after preparation for a non-modal decision and defaults to off.
-- **Launch at login** uses Service Management for an installed app.
+- **Launch at login** uses Service Management for the release app in `/Applications` or `~/Applications`.
+  Move `app/dist/praatvol.app` there and open the installed copy before enabling it and saving Settings.
+  The checkbox shows the actual enabled status. Repository builds and the dev app cannot enable it.
 - **Enable control socket** is on by default and lets the Touch Bar and `praatvolctl` control the app.
   Turning it off or on takes effect when you save Settings, with no relaunch.
 
@@ -203,7 +227,10 @@ Enter the key once in Settings.
 The app never reads the macOS Keychain, so macOS never asks for your password.
 Text fields support Command-X, Command-C, Command-V, and Command-A.
 If macOS requires login approval, allow the app under **System Settings > General > Login Items**.
+Approval requests and registration failures use notifications, never blocking alerts.
+Allow notifications for praatvol to see these messages; failures are also logged.
 The app unregisters login access only if a registration exists.
+At launch, a previously requested login registration that is no longer enabled is logged without a popup.
 
 ### Quit
 
@@ -628,18 +655,21 @@ Apple capture calls can defer cleanup until the permission flow returns.
 ### Silent or absent tracks
 
 If microphone callbacks stop for five seconds or the input disappears, the app tries replacement inputs.
-If none works, the app stops capture and preserves audio.
+If none works, a call continues with system audio only; a room recording stops and preserves audio.
 Check microphone permission.
 For calls, check **System Settings > Sound > Input** or select an available **Microphone for calls** in Settings.
 Room uses the built-in microphone when available and excludes Bluetooth, virtual, and aggregate inputs.
-If no microphone frames arrived, start a new recording; the empty item cannot be retried.
+If neither track supplied frames, start a new recording; the empty item cannot be retried.
+A call with system frames but no microphone frames can still prepare a transcript.
 
 If the system track stays silent, start playback.
 Check system audio permission.
 Inspect both raw tracks before another call.
 
-Stop capture before you change output devices.
-The app lacks automatic recovery after an output change.
+Avoid deliberate output changes during important recordings until you have verified the headset on hardware.
+The app logs output changes and keeps the device-independent system tap running, but does not rebuild a stalled system tap.
+If Teams reports a broken speaker, stop capture and check whether playback recovers.
+Whether Teams, headset profile switching, or the process tap causes this warning remains unconfirmed.
 Alignment uses host timestamps but lacks drift correction between device clocks.
 Hardware without host timestamps requires an approximate callback-time fallback.
 
@@ -706,6 +736,7 @@ swift build -Xswiftc -warnings-as-errors
 The suite uses Swift Testing and synthetic audio without network requests.
 The suite covers state transitions, progress, estimates, meters, library metadata, retry rules, request bodies, codecs, and raw verification.
 The suite also checks private key file permissions, exact contents, missing files, and overwrites.
+Capture tests cover invalid rates and channels, hardware/node mismatches, format settling resets, and system-only track selection.
 The `app/scripts/coverage.sh` script reports the core line coverage and fails below 70%.
 The job and meter tests preceded the corresponding core code.
 The raw compression tests followed the encoder implementation.
@@ -721,7 +752,15 @@ Capture, permissions, notifications, and login access require a real desktop ses
 - Cancel setup and confirm no paid request occurs.
 - Set a Bluetooth microphone as the default and the call preference; confirm Room logs and captures the built-in microphone.
 - Disconnect the active call microphone and confirm capture continues in the same item with a timestamped warning and swap log.
-- Test a stalled input and confirm replacement attempts finish or preserve partial audio without a swap alert.
+- Test a stalled input and confirm bounded replacement attempts, saved warnings, and no blocking alert.
+- With soundcore Space One selected for Teams input and output, start capture before joining a call and repeat after joining.
+- Trigger a Bluetooth call-profile switch; confirm no crash and either a recovered microphone or a system-only warning.
+- Make every eligible input unavailable; confirm one `microphone-failed` event and notification, continuing system meter, and saved failure warning.
+- Deny notifications and repeat mic failure; confirm no popup, window activation, or Finder reveal from the failure.
+- Test a call with an empty microphone track and audible system playback; stop and confirm preparation uses the system track.
+- Check Teams playback during the switch, then change the default output and inspect `system-*-changed` logs and raw system audio.
+- Repeat with playback initially idle; confirm capture startup does not wait for playback.
+- If the Teams speaker warning returns, compare with capture stopped; note whether stopping capture restores playback.
 - Check a replacement with a different sample rate and channel count; inspect the saved track and call alignment.
 - Check a zero-frame microphone track: confirm the friendly failure, stored error, absent retry actions, and socket refusal.
 - Record a call with headphones and a separate microphone.

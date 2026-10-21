@@ -7,6 +7,7 @@ let package = Package(
     products: [.library(name: "PraatvolCore", targets: ["PraatvolCore"]),
                .executable(name: "Praatvol", targets: ["Praatvol"])],
     targets: [.target(name: "PraatvolCore"),
-              .executableTarget(name: "Praatvol", dependencies: ["PraatvolCore"]),
+              .target(name: "CaptureGuard"),
+              .executableTarget(name: "Praatvol", dependencies: ["PraatvolCore", "CaptureGuard"]),
               .testTarget(name: "PraatvolCoreTests", dependencies: ["PraatvolCore"])]
 )

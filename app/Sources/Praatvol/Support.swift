@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PraatvolCore
+import ServiceManagement
 
 struct AppIdentity {
     // #COMPLETION_DRIVE: A bare SwiftPM executable defaults to dev identity, never production.
@@ -13,6 +14,33 @@ struct AppIdentity {
         .appendingPathComponent("Library/Application Support")
         .appendingPathComponent(root.lastPathComponent)
     static let controlSocket = supportDirectory.appendingPathComponent("control.sock")
+}
+
+enum LoginItems {
+    static var isInstalled: Bool {
+        guard !AppIdentity.isDevelopment else { return false }
+        let parent = Bundle.main.bundleURL.resolvingSymlinksInPath().deletingLastPathComponent()
+        let userApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+        return parent == URL(fileURLWithPath: "/Applications", isDirectory: true)
+            || parent == userApplications.resolvingSymlinksInPath()
+    }
+
+    static func state(errorMessage: String? = nil) -> LoginItemState {
+        let status: LoginItemStatus
+        switch SMAppService.mainApp.status {
+        case .enabled: status = .enabled
+        case .requiresApproval: status = .requiresApproval
+        case .notRegistered: status = .notRegistered
+        case .notFound: status = .notFound
+        @unknown default: status = .unknown
+        }
+        return LoginItemState.resolve(status: status, isInstalled: isInstalled, errorMessage: errorMessage)
+    }
+
+    static func verifyAtLaunch() {
+        guard UserDefaults.standard.bool(forKey: "launchAtLoginRequested") else { return }
+        if state() != .enabled { AppLog.shared.event("login-item-not-enabled-at-launch") }
+    }
 }
 
 final class AppLog {

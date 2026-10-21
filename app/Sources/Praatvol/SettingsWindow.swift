@@ -12,6 +12,8 @@ final class SettingsWindow: NSObject {
     private let askBeforeTranscribing = NSButton(
         checkboxWithTitle: "Ask before transcribing", target: nil, action: nil)
     private let launchAtLogin = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
+    private let loginExplanation = NSTextField(labelWithString: "")
+    var notifyLoginStatus: (String) -> Void = { _ in }
     private let controlSocket = NSButton(
         checkboxWithTitle: "Enable control socket (lets the Touch Bar and praatvolctl control this app)", target: nil,
         action: nil)
@@ -37,10 +39,7 @@ final class SettingsWindow: NSObject {
             lossless.state = preferences.lossless ? .on : .off
             askBeforeTranscribing.state = preferences.askBeforeTranscribing ? .on : .off
             controlSocket.state = preferences.controlSocketEnabled ? .on : .off
-            switch SMAppService.mainApp.status {
-            case .enabled, .requiresApproval: launchAtLogin.state = .on
-            default: launchAtLogin.state = .off
-            }
+            refreshLoginState()
             if window == nil { createWindow() }
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -61,7 +60,7 @@ final class SettingsWindow: NSObject {
         save.keyEquivalent = "\r"
         let note = NSTextField(
             wrappingLabelWithString:
-                "The key is stored in a private file in the app's Application Support folder. The model field accepts a transcription model identifier. The public models API does not reliably list transcription models. Launch at login requires an installed app. Settings affect the next item. Turning off the control socket stops praatvolctl and Touch Bar control."
+                "The key is stored in a private file in the app's Application Support folder. The model field accepts a transcription model identifier. The public models API does not reliably list transcription models. Settings affect the next item. Turning off the control socket stops praatvolctl and Touch Bar control."
         )
         let stack = NSStackView(views: [
             row("OpenRouter API key", apiKey), row("Model", model),
@@ -70,7 +69,7 @@ final class SettingsWindow: NSObject {
                 wrappingLabelWithString:
                     "Calls prefer Bluetooth headsets unless you choose a microphone. Room always uses the built-in microphone, or a wired input if unavailable."
             ),
-            lossless, askBeforeTranscribing, launchAtLogin, controlSocket, note, save,
+            lossless, askBeforeTranscribing, launchAtLogin, loginExplanation, controlSocket, note, save,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -96,17 +95,59 @@ final class SettingsWindow: NSObject {
         return stack
     }
 
+    private func refreshLoginState() {
+        let state = LoginItems.state()
+        launchAtLogin.state = state == .enabled ? .on : .off
+        launchAtLogin.isEnabled = LoginItems.isInstalled
+        switch state {
+        case .notInstalled:
+            loginExplanation.stringValue = "Move praatvol to Applications to launch at login."
+        case .needsApproval:
+            loginExplanation.stringValue = "Approve praatvol in System Settings > General > Login Items."
+        case .failed(let message): loginExplanation.stringValue = message
+        default: loginExplanation.stringValue = ""
+        }
+    }
+
+    private func saveLoginSetting() {
+        guard LoginItems.isInstalled else {
+            refreshLoginState()
+            return
+        }
+        let requested = launchAtLogin.state == .on
+        UserDefaults.standard.set(requested, forKey: "launchAtLoginRequested")
+        let service = SMAppService.mainApp
+        var errorMessage: String?
+        do {
+            if requested {
+                if service.status != .enabled { try service.register() }
+            } else if [.enabled, .requiresApproval].contains(service.status) {
+                // Unregister throws EPERM for .notFound (e.g. an app outside /Applications), so only undo a real registration.
+                try service.unregister()
+            }
+        } catch {
+            AppLog.shared.event("login-item-update-failed", code: (error as NSError).code)
+            errorMessage = error.localizedDescription
+        }
+        let state = LoginItems.state(errorMessage: errorMessage)
+        switch state {
+        case .needsApproval:
+            notifyLoginStatus("Approve praatvol in System Settings > General > Login Items.")
+        case .failed(let message):
+            AppLog.shared.event("login-item-unavailable")
+            notifyLoginStatus(message)
+        case .disabled where requested:
+            AppLog.shared.event("login-item-registration-not-enabled")
+            notifyLoginStatus("Launch at login was not enabled. Check System Settings > General > Login Items.")
+        default: break
+        }
+        refreshLoginState()
+    }
+
     @objc private func saveSettings() {
         do {
             let modelIdentifier = model.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !modelIdentifier.isEmpty else { throw PraatvolError("Enter a transcription model identifier.") }
-            let service = SMAppService.mainApp
-            if launchAtLogin.state == .on {
-                if service.status != .enabled { try service.register() }
-            } else if service.status == .enabled || service.status == .requiresApproval {
-                // Unregister throws EPERM for .notFound (e.g. an app outside /Applications), so only undo a real registration.
-                try service.unregister()
-            }
             try KeyStore.save(apiKey.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
             let defaults = UserDefaults.standard
             defaults.set(modelIdentifier, forKey: "model")
@@ -115,12 +156,10 @@ final class SettingsWindow: NSObject {
             defaults.set(lossless.state == .on, forKey: "lossless")
             defaults.set(askBeforeTranscribing.state == .on, forKey: "askBeforeTranscribing")
             defaults.set(controlSocket.state == .on, forKey: "controlSocketEnabled")
+            saveLoginSetting()
             apiKey.stringValue = ""
             window?.close()
             saved()
-            if service.status == .requiresApproval {
-                showAlert("Approve \(AppIdentity.name) in System Settings > General > Login Items.")
-            }
         } catch {
             AppLog.shared.event("settings-save-failed", code: (error as NSError).code)
             showAlert(error.localizedDescription)

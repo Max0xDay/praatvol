@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 — 2026-10-21
+
+### Fixes
+
+- Microphone taps wait for valid, matching hardware and node formats to settle; a native exception guard prevents tap-installation and engine-start exceptions from terminating the app.
+- Microphone recovery retries a still-present headset before alternatives, with at most three attempts. Failed call microphones log and notify without stopping system capture; empty microphone tracks no longer prevent preparation from the surviving system track.
+- System capture no longer waits for tapped playback at startup. Default-output and output-format changes are logged without binding the private aggregate to a physical output; the Teams Bluetooth speaker warning still needs hardware verification.
+- Launch at login is available only for the release app in `/Applications` or `~/Applications`; Settings shows its actual status.
+- Login approval requests and failures use non-blocking notifications. Missing requested registrations are logged at launch.
+- Release builds print installation and launch-at-login instructions.
+
+## 0.2.1 — 2026-10-16
 
 ### Features
 
