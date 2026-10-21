@@ -26,6 +26,76 @@ struct MicrophoneDevice {
     }
 }
 
+// Observes output changes without setting a device, clock, stream format, or audio route.
+final class CaptureOutputMonitor {
+    private let queue = DispatchQueue(label: "praatvol.capture-output")
+    private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    private var active = false
+
+    func start() {
+        queue.sync {
+            active = true
+            watchDefaultOutput()
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            active = false
+            removeListeners()
+        }
+    }
+
+    private func watchDefaultOutput() {
+        guard active else { return }
+        removeListeners()
+        addListener(AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultOutputDevice) {
+            [weak self] in
+            AppLog.shared.event("system-default-output-changed")
+            self?.watchDefaultOutput()
+        }
+        do {
+            var output = AudioDeviceID(kAudioObjectUnknown)
+            try AudioDevices.property(
+                AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultOutputDevice,
+                value: &output)
+            guard output != kAudioObjectUnknown else { return }
+            addListener(output, selector: kAudioDevicePropertyStreamFormat, scope: kAudioDevicePropertyScopeOutput) {
+                AppLog.shared.event("system-output-format-changed")
+            }
+            addListener(output, selector: kAudioDevicePropertyNominalSampleRate) {
+                AppLog.shared.event("system-output-rate-changed")
+            }
+        } catch {
+            AppLog.shared.event("system-output-watch-failed", code: (error as NSError).code)
+        }
+    }
+
+    private func addListener(
+        _ object: AudioObjectID, selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, changed: @escaping () -> Void
+    ) {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+        let listener: AudioObjectPropertyListenerBlock = { _, _ in changed() }
+        let status = AudioObjectAddPropertyListenerBlock(object, &address, queue, listener)
+        if status == noErr {
+            listeners.append((object, address, listener))
+        } else {
+            AppLog.shared.event("system-output-listener-failed", code: Int(status))
+        }
+    }
+
+    private func removeListeners() {
+        for (object, savedAddress, listener) in listeners {
+            var address = savedAddress
+            let status = AudioObjectRemovePropertyListenerBlock(object, &address, queue, listener)
+            if status != noErr { AppLog.shared.event("system-output-listener-removal-failed", code: Int(status)) }
+        }
+        listeners.removeAll()
+    }
+}
+
 enum AudioDevices {
     static func property<Value>(
         _ object: AudioObjectID, selector: AudioObjectPropertySelector,

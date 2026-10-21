@@ -48,3 +48,6 @@ if [[ "$variant" == "release" ]]; then
     rm -r "$stagingDirectory"
 fi
 printf 'Built %s (%s)\n' "$applicationPath" "$bundleIdentifier"
+if [[ "$variant" == "release" ]]; then
+    printf 'Drag app/dist/praatvol.app to /Applications, open it there, and enable Launch at login in Settings.\n'
+fi
